@@ -1,0 +1,210 @@
+/*
+ * 基础样式:作用域全部收在 .bbs-root 下,避免污染 ST 宿主页面。
+ * 不写颜色字面量,一律取 theme.css 的变量。
+ */
+
+/* shadow root 宿主:回到初始值,切断从 ST 继承下来的排版属性。
+   配合 index.ts 里 host 的内联 !important,双保险。 */
+:host {
+  all: initial;
+}
+
+.bbs-root,
+.bbs-root * {
+  box-sizing: border-box;
+}
+
+.bbs-root {
+  font-family: var(--bbs-font-sans);
+  font-size: 14px;
+  color: var(--bbs-ink);
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.6;
+}
+
+/* —— 遮罩层 —— */
+.bbs-overlay {
+  position: fixed;
+  /* 不用 inset 简写:部分移动端 WebView 不认,会让 overlay 高度塌成 auto,
+     进而使子级 height:100% 解析失败(高度为 0)。展开成四个属性更稳。 */
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bbs-overlay);
+  backdrop-filter: blur(3px);
+  padding: 24px;
+}
+
+/* —— 窗口外壳 —— */
+.bbs-window {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: var(--bbs-win-max-w);
+  height: var(--bbs-win-max-h);
+  max-height: var(--bbs-win-max-h);
+  background: var(--bbs-bg);
+  border: 1px solid var(--bbs-line);
+  border-radius: var(--bbs-radius-win);
+  box-shadow: var(--bbs-shadow);
+  overflow: hidden;
+}
+
+/* —— 内容区(分页容器) —— */
+.bbs-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--bbs-page-pad);
+}
+
+/* —— 通用排版原子,供各分页复用 —— */
+.bbs-title {
+  font-weight: 600;
+  font-size: 22px;
+  color: var(--bbs-ink);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+/* —— 通用按钮 —— */
+.bbs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border: 1px solid var(--bbs-line-strong);
+  border-radius: var(--bbs-radius-sm);
+  background: var(--bbs-surface);
+  color: var(--bbs-ink);
+  font-family: var(--bbs-font-sans);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--bbs-dur) var(--bbs-ease),
+    border-color var(--bbs-dur) var(--bbs-ease),
+    opacity var(--bbs-dur) var(--bbs-ease);
+}
+.bbs-btn:hover {
+  border-color: var(--bbs-accent);
+  color: var(--bbs-accent);
+}
+.bbs-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.bbs-btn:focus-visible {
+  outline: 2px solid var(--bbs-accent);
+  outline-offset: 1px;
+}
+.bbs-btn-primary {
+  background: var(--bbs-accent);
+  border-color: var(--bbs-accent);
+  color: var(--bbs-accent-ink);
+}
+.bbs-btn-primary:hover {
+  color: var(--bbs-accent-ink);
+  opacity: 0.9;
+}
+
+/* —— 通用输入 —— */
+.bbs-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--bbs-line-strong);
+  border-radius: var(--bbs-radius-sm);
+  background: var(--bbs-surface);
+  color: var(--bbs-ink);
+  font-family: var(--bbs-font-sans);
+  font-size: 13px;
+}
+.bbs-input:focus {
+  outline: none;
+  border-color: var(--bbs-accent);
+}
+
+.bbs-rule {
+  height: 1px;
+  background: var(--bbs-line);
+  border: 0;
+  margin: var(--bbs-gap) 0;
+}
+
+/* —— 空状态:不是错误,是邀请 —— */
+.bbs-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  height: 100%;
+  text-align: center;
+  color: var(--bbs-ink-muted);
+}
+
+.bbs-empty .bbs-empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: var(--bbs-radius);
+  background: var(--bbs-surface-2);
+  color: var(--bbs-ink-muted);
+  font-size: 26px;
+}
+
+.bbs-empty p {
+  margin: 0;
+  font-size: 14px;
+  max-width: 32ch;
+}
+
+/* —— 隐藏滚动条(保留滚动能力):整个 UI 内统一 —— */
+.bbs-root * {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* 旧 Edge/IE */
+}
+.bbs-root *::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none; /* Chrome/Safari */
+}
+
+/* ============ 响应式:移动端整屏(底部抽屉式) ============ */
+@media (max-width: 640px) {
+  .bbs-overlay {
+    padding: 0;
+    align-items: flex-end;
+  }
+  .bbs-window {
+    max-width: 100%;
+    width: 100%;
+    /* 直接用视口高,不依赖父级百分比链 */
+    height: 96vh;
+    height: 96dvh;
+    max-height: 96vh;
+    max-height: 96dvh;
+    border: 0;
+    /* 仅顶部圆角:贴底的抽屉观感 */
+    border-radius: 18px 18px 0 0;
+  }
+}
+
+/* ============ 尊重减少动效 ============ */
+@media (prefers-reduced-motion: reduce) {
+  .bbs-root * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

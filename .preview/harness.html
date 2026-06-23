@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>柏宝书 · preview</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <style>
+      /* 模拟 ST 的全局污染:故意设置激进的 body 样式,验证 shadow 隔离是否生效 */
+      body {
+        margin: 0;
+        background: #2a2a2a;
+        height: 100vh;
+        font-size: 22px !important;
+        color: #ff00ff !important;
+        font-family: 'Comic Sans MS', cursive !important;
+        line-height: 3 !important;
+        letter-spacing: 4px !important;
+      }
+      #extensionsMenu { position: fixed; top: 8px; left: 8px; }
+    </style>
+  </head>
+  <body>
+    <div id="extensionsMenu"></div>
+    <script>
+      // 模拟 SillyTavern 上下文 + 预置记忆数据,便于预览各页面填充态
+      const listeners = {};
+      const chatMetadata = {
+        baibai_book: {
+          version: 1,
+          state: { time: '第三日 黄昏', location: '风语者酒馆 · 二楼雅间' },
+          items: [
+            { id: 'i1', name: '青铜钥匙', desc: '刻着猫头鹰纹样', createdAt: 1, updatedAt: 1 },
+            { id: 'i2', name: '金币', qty: 120, createdAt: 1, updatedAt: 1 },
+            { id: 'i3', name: '治疗药水', qty: 3, desc: '恢复少量生命', createdAt: 1, updatedAt: 1 },
+          ],
+          plans: [
+            { id: 'p1', kind: 'plan', content: '在午夜前赶到旧码头与线人接头', status: 'open', createdAt: 1 },
+            { id: 'p2', kind: 'suspense', content: '酒馆老板为何对那枚钥匙如此紧张?', status: 'open', createdAt: 1 },
+            { id: 'p3', kind: 'plan', content: '打听清楚红衣女子的来历', status: 'resolved', createdAt: 1, resolvedAt: 2 },
+          ],
+          summaries: [
+            { id: 's1', text: '第一日清晨,U 抵达风语者酒馆,从神秘老人手中接过一枚青铜钥匙,被告知它能开启地窖深处的密门。当晚,一名红衣女子尾随而来,在U 的房门外徘徊良久后离去。', coveredIndices: [0,1,2,3], depth: 1, createdAt: 1718000000000, auto: true, timeLabel: '第一日 清晨' },
+            { id: 's2', text: '第三日黄昏,U 在二楼雅间与艾伦再次会面。艾伦坦白自己其实是王室密探,震惊之余握住U 的手提议结盟,共同调查钥匙背后的阴谋。两人约定午夜在旧码头与线人接头。', coveredIndices: [4,5,6,7], depth: 1, createdAt: 1718003600000, auto: true, timeLabel: '第三日 黄昏' },
+          ],
+        },
+      };
+      const noop = () => {};
+      window.SillyTavern = {
+        getContext: () => ({
+          chat: [],
+          chatMetadata,
+          name1: 'U',
+          name2: '艾伦',
+          getCurrentChatId: () => 'preview-chat',
+          getRequestHeaders: () => ({ 'Content-Type': 'application/json' }),
+          saveMetadataDebounced: noop,
+          saveMetadata: async () => {},
+          saveChat: async () => {},
+          reloadCurrentChat: async () => {},
+          eventSource: { on: (e, h) => { (listeners[e] ||= []).push(h); }, emit: noop },
+          eventTypes: {
+            USER_MESSAGE_RENDERED: 'user_message_rendered',
+            CHARACTER_MESSAGE_RENDERED: 'character_message_rendered',
+            MESSAGE_SENT: 'message_sent',
+            GENERATION_ENDED: 'generation_ended',
+            CHAT_CHANGED: 'chat_id_changed',
+          },
+        }),
+      };
+    </script>
+    <script>
+      // mock ST 服务端代理:/status 返回模型列表
+      const _fetch = window.fetch.bind(window);
+      window.fetch = (url, opts) => {
+        if (typeof url === 'string' && url.includes('/status')) {
+          return Promise.resolve(new Response(JSON.stringify({ data: [
+            { id: 'gpt-4o-mini' }, { id: 'gpt-4o' }, { id: 'claude-3-5-sonnet' }, { id: 'deepseek-chat' },
+          ] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+        }
+        return _fetch(url, opts);
+      };
+    </script>
+    <script type="module">
+      import '../dist/index.js';
+      const open = () => {
+        const item = document.getElementById('bbs-menu-item');
+        if (item) { item.click(); return; }
+        setTimeout(open, 100);
+      };
+      setTimeout(open, 300);
+    </script>
+  </body>
+</html>

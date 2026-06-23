@@ -1,0 +1,23 @@
+import { chromium } from 'playwright';
+import { createServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(__dirname, '..');
+const MIME = { '.html':'text/html','.js':'text/javascript','.css':'text/css','.map':'application/json' };
+const server = createServer(async (req,res)=>{try{const u=decodeURIComponent(req.url.split('?')[0]);const f=path.join(ROOT,u==='/'?'.preview/harness-manual.html':u);const d=await readFile(f);res.writeHead(200,{'Content-Type':MIME[path.extname(f)]??'application/octet-stream'});res.end(d);}catch{res.writeHead(404).end('x');}});
+await new Promise(r=>server.listen(0,r));
+const base=`http://localhost:${server.address().port}/.preview/harness-manual.html`;
+const b=await chromium.launch();
+const ctx=await b.newContext({viewport:{width:1280,height:800}});
+const p=await ctx.newPage();
+await p.goto(base,{waitUntil:'networkidle'});
+await p.click('#bbs-menu-item');
+await p.waitForTimeout(700);
+console.log(await p.evaluate(()=>!!document.querySelector('.bbs-window'))?'打开OK':'FAIL打开');
+// 点遮罩角落(窗口居中,角落是露出的遮罩)
+await p.mouse.click(20,20);
+await p.waitForTimeout(500);
+console.log(!(await p.evaluate(()=>!!document.querySelector('.bbs-window')))?'PASS: 桌面点遮罩可关闭':'FAIL: 桌面点遮罩未关');
+await b.close();server.close();

@@ -1,0 +1,64 @@
+/*
+ * 主题令牌(design tokens)— 现代 · 清新 · 简约
+ * 所有颜色/字体/尺寸都从这里取,组件不写死颜色。
+ * 切换主题 = 改根节点 [data-theme];未来自定义主题只需新增一套同名变量。
+ */
+
+.bbs-root {
+  /* —— 字体:现代无衬线栈,优先国产现代字体,回退系统 —— */
+  --bbs-font-sans: 'MiSans', 'HarmonyOS Sans SC', 'PingFang SC', 'Microsoft YaHei',
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', system-ui, sans-serif;
+  --bbs-font-mono: 'SF Mono', 'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace;
+
+  /* —— 圆角:更大、更柔 —— */
+  --bbs-radius-win: 16px;
+  --bbs-radius: 10px;
+  --bbs-radius-sm: 8px;
+  --bbs-radius-pill: 999px;
+
+  /* —— 间距节奏 —— */
+  --bbs-gap: 16px;
+  --bbs-page-pad: clamp(20px, 4vw, 40px);
+
+  /* —— 尺寸 —— */
+  --bbs-win-max-w: 880px;
+  --bbs-win-max-h: 82vh;
+
+  /* —— 动效 —— */
+  --bbs-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --bbs-dur: 0.28s;
+}
+
+/* ========== 昼 · 清晨 ========== */
+.bbs-root[data-theme='day'] {
+  --bbs-bg: #f5f7f8; /* 窗口底:极浅冷灰白 */
+  --bbs-surface: #ffffff; /* 抬起面/卡片 */
+  --bbs-surface-2: #f0f3f4; /* 次级面/输入框 */
+  --bbs-ink: #1a1f24; /* 主文字 */
+  --bbs-ink-soft: #5a646e; /* 次级文字 */
+  --bbs-ink-muted: #9aa4ae; /* 弱化/占位 */
+  --bbs-accent: #14b8a6; /* 薄荷青 · 强调 */
+  --bbs-accent-soft: rgba(20, 184, 166, 0.12);
+  --bbs-accent-ink: #ffffff; /* 强调上的文字 */
+  --bbs-line: #e8ebed; /* 细线 */
+  --bbs-line-strong: #dde1e4;
+  --bbs-overlay: rgba(20, 28, 33, 0.34); /* 遮罩 */
+  --bbs-shadow: 0 18px 48px -20px rgba(20, 30, 40, 0.28), 0 4px 12px -6px rgba(20, 30, 40, 0.12);
+}
+
+/* ========== 夜 · 深蓝灰 ========== */
+.bbs-root[data-theme='night'] {
+  --bbs-bg: #16191f; /* 现代深石板蓝灰,非纯黑 */
+  --bbs-surface: #1e222a;
+  --bbs-surface-2: #262b34;
+  --bbs-ink: #e7eaed;
+  --bbs-ink-soft: #a3acb5;
+  --bbs-ink-muted: #6b747d;
+  --bbs-accent: #2dd4bf; /* 暗底提亮的薄荷青 */
+  --bbs-accent-soft: rgba(45, 212, 191, 0.15);
+  --bbs-accent-ink: #0c1311;
+  --bbs-line: #2a2f38;
+  --bbs-line-strong: #353b45;
+  --bbs-overlay: rgba(8, 11, 14, 0.58);
+  --bbs-shadow: 0 20px 56px -22px rgba(0, 0, 0, 0.6), 0 4px 14px -8px rgba(0, 0, 0, 0.45);
+}

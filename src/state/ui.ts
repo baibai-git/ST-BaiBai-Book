@@ -1,0 +1,72 @@
+import { reactive, watch } from 'vue';
+
+/** 导航位置:auto = PC 顶部、移动端底部 */
+export type NavPosition = 'top' | 'bottom' | 'auto';
+export type ThemeName = 'day' | 'night';
+
+interface UiState {
+  open: boolean;
+  /** 当前分页 id,对应 registry 里的 key */
+  activePage: string;
+  theme: ThemeName;
+  navPosition: NavPosition;
+}
+
+const STORAGE_KEY = 'bbs.ui.v1';
+
+function load(): Partial<UiState> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+const saved = load();
+
+export const ui = reactive<UiState>({
+  open: false,
+  activePage: saved.activePage ?? 'summary',
+  theme: saved.theme ?? 'day',
+  navPosition: saved.navPosition ?? 'auto',
+});
+
+// 持久化用户偏好(不含 open / activePage 的临时性也无妨,一并存)
+watch(
+  () => [ui.theme, ui.navPosition, ui.activePage],
+  () => {
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          theme: ui.theme,
+          navPosition: ui.navPosition,
+          activePage: ui.activePage,
+        }),
+      );
+    } catch {
+      /* localStorage 不可用时静默 */
+    }
+  },
+);
+
+/**
+ * 窗口最近一次打开的时间戳。用于在打开瞬间忽略遮罩关闭——
+ * 移动端打开手势末尾合成的 click 会穿透到刚渲染的遮罩,造成"秒关"。
+ */
+export let lastOpenedAt = 0;
+
+export function openBook(page?: string) {
+  if (page) ui.activePage = page;
+  ui.open = true;
+  lastOpenedAt = performance.now();
+}
+
+export function closeBook() {
+  ui.open = false;
+}
+
+export function toggleTheme() {
+  ui.theme = ui.theme === 'day' ? 'night' : 'day';
+}

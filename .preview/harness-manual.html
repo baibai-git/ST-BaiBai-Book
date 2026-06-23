@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>柏宝书 · touch test</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <link rel="stylesheet" href="../dist/index.css" />
+    <style>
+      body { margin: 0; background: #2a2a2a; height: 100vh; }
+      /* 把菜单项放在左上角,方便 tap 定位 */
+      #extensionsMenu { position: fixed; top: 8px; left: 8px; background:#fff; }
+    </style>
+  </head>
+  <body>
+    <div id="extensionsMenu"></div>
+    <script type="module">
+      import '../dist/index.js';
+    </script>
+  </body>
+</html>

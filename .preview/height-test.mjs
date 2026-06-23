@@ -1,0 +1,28 @@
+import { chromium, devices } from 'playwright';
+import { createServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(__dirname, '..');
+const MIME = { '.html':'text/html','.js':'text/javascript','.css':'text/css','.map':'application/json' };
+const server = createServer(async (req,res)=>{try{const u=decodeURIComponent(req.url.split('?')[0]);const f=path.join(ROOT,u==='/'?'.preview/harness-manual.html':u);const d=await readFile(f);res.writeHead(200,{'Content-Type':MIME[path.extname(f)]??'application/octet-stream'});res.end(d);}catch{res.writeHead(404).end('x');}});
+await new Promise(r=>server.listen(0,r));
+const base=`http://localhost:${server.address().port}/.preview/harness-manual.html`;
+const b=await chromium.launch();
+const ctx=await b.newContext({...devices['iPhone 13']});
+const p=await ctx.newPage();
+await p.goto(base,{waitUntil:'networkidle'});
+await p.tap('#bbs-menu-item');
+await p.waitForTimeout(700);
+const m=await p.evaluate(()=>{
+  const q=s=>{const e=document.querySelector(s);return e?Math.round(e.getBoundingClientRect().height):null;};
+  return {overlay:q('.bbs-overlay'),window:q('.bbs-window'),body:q('.bbs-body'),nav:q('.bbs-nav'),vh:window.innerHeight};
+});
+console.log('viewport h:',m.vh);
+console.log('overlay  h:',m.overlay);
+console.log('window   h:',m.window);
+console.log('body     h:',m.body);
+console.log('nav      h:',m.nav);
+console.log((m.window>0 && m.body>0)?'PASS: 高度正常':'FAIL: 高度为0');
+await b.close();server.close();

@@ -1,0 +1,12 @@
+{
+  "display_name": "柏宝书",
+  "loading_order": 100,
+  "requires": [],
+  "optional": [],
+  "js": "dist/index.js",
+  "author": "baibai",
+  "version": "0.0.1",
+  "homePage": "https://github.com/baibai-git/ST-BaiBai-Book",
+  "auto_update": false,
+  "minimum_client_version": "1.12.13"
+}

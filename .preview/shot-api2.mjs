@@ -1,0 +1,33 @@
+import { chromium } from 'playwright';
+import { createServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(__dirname, '..');
+const MIME = { '.html':'text/html','.js':'text/javascript','.css':'text/css','.map':'application/json' };
+const server = createServer(async (req,res)=>{try{const u=decodeURIComponent(req.url.split('?')[0]);const f=path.join(ROOT,u==='/'?'.preview/harness.html':u);const d=await readFile(f);res.writeHead(200,{'Content-Type':MIME[path.extname(f)]??'application/octet-stream'});res.end(d);}catch{res.writeHead(404).end('x');}});
+await new Promise(r=>server.listen(0,r));
+const base=`http://localhost:${server.address().port}/.preview/harness.html`;
+const b=await chromium.launch();
+const ctx=await b.newContext({viewport:{width:1280,height:900},deviceScaleFactor:2});
+const p=await ctx.newPage();
+await p.goto(base,{waitUntil:'networkidle'});
+const SR=`document.getElementById('bbs-app-host').shadowRoot`;
+await p.waitForFunction(`${SR} && ${SR}.querySelector('.bbs-window')`,{timeout:5000});
+await p.evaluate(()=>{const sr=document.getElementById('bbs-app-host').shadowRoot;sr.querySelectorAll('.bbs-nav-item')[3].click();});
+await p.waitForTimeout(500);
+await p.evaluate(()=>{const sr=document.getElementById('bbs-app-host').shadowRoot;const h=[...sr.querySelectorAll('.bbs-collapsible-head')].find(x=>x.textContent.includes('API'));h&&h.click();});
+await p.waitForTimeout(500);
+await p.evaluate(()=>{const sr=document.getElementById('bbs-app-host').shadowRoot;const a=[...sr.querySelectorAll('.bbs-btn')].find(x=>x.textContent.includes('添加渠道'));a&&a.click();});
+await p.waitForTimeout(300);
+await p.evaluate(()=>{const sr=document.getElementById('bbs-app-host').shadowRoot;const r=[...sr.querySelectorAll('.bbs-icon-mini')].find(x=>x.title&&x.title.includes('拉取'));r&&r.click();});
+await p.waitForTimeout(600);
+// 滚动到底部看渠道卡片
+await p.evaluate(()=>{const sr=document.getElementById('bbs-app-host').shadowRoot;const body=sr.querySelector('.bbs-body');body.scrollTop=body.scrollHeight;});
+await p.waitForTimeout(400);
+await p.screenshot({path:path.join(__dirname,'shot-api-scrolled.png')});
+// 检查模型下拉是否渲染
+const info=await p.evaluate(()=>{const sr=document.getElementById('bbs-app-host').shadowRoot;const sel=sr.querySelector('.bbs-model-row select');return sel?[...sel.options].map(o=>o.value):'no-select';});
+console.log('model options:', JSON.stringify(info));
+await b.close();server.close();
