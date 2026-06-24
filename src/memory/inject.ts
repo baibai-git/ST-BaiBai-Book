@@ -12,8 +12,10 @@
 
 import type { STMessage } from '@/st/context';
 import { getContext } from '@/st/context';
+import { getLeaf, leafValid } from './apply';
 import { fmtItems, fmtPlans } from './prompts';
 import { memory } from './store';
+import type { LeafExtra, MemSummary } from './types';
 
 // 以下常量来源:SillyTavern public/script.js
 //   extension_prompt_types.IN_CHAT = 1   (script.js:486)
@@ -28,23 +30,149 @@ const INJECT_KEY = 'baibai_book_memory';
 const INJECT_DEPTH = 2;
 
 /**
- * 一条摘要是否「已启用」(应注入)。
- * 生成与使用解耦:摘要对所有楼层提前生成,但只有当它覆盖的楼层已被隐藏
- * (原文移出主上下文)时才注入,顶替原文;仍在保留窗口发全文的楼层,其摘要暂存不注入,
- * 避免与全文重复。判定:覆盖范围内仍存在于 chat 的消息全部为 is_system(已隐藏)。
- * 取不到 chat 时(ST 未就绪)回退为「全部启用」,避免丢记忆。
+ * 一条叶子是否「已启用」(应注入)。
+ * 生成与使用解耦:叶子对所有楼层提前生成,但只有当它所在消息已被隐藏(is_system,
+ * 原文移出主上下文)时才注入顶替原文;仍在保留窗口发全文的叶子暂不注入,避免与全文重复。
  */
-export function isSummaryActive(coveredIndices: number[], chat: STMessage[] | null): boolean {
-  if (!chat) return true;
-  let sawExisting = false;
-  for (const i of coveredIndices) {
-    const m = chat[i];
-    if (!m) continue; // 索引已失效(消息被删等)→ 不阻碍启用
-    sawExisting = true;
-    if (!m.is_system) return false; // 还有原文在主上下文里 → 尚未启用
+function leafActiveAt(chat: STMessage[] | null, i: number): boolean {
+  if (!chat) return false;
+  return chat[i]?.is_system === true;
+}
+
+/** 统一视图节点:叶子来自 chat 扫描,压缩节点来自森林,childIds 跨存储连接 */
+interface ViewNode {
+  id: string;
+  kind: 'leaf' | 'comp';
+  text: string;
+  timeLabel?: string;
+  createdAt: number;
+  childIds: string[]; // comp 才有
+  msgIndex: number; // leaf 才有意义(排序键);comp 取 -1
+  active: boolean; // leaf:所在消息已隐藏
+}
+
+/** 构建统一森林视图:叶子(leafValid)+ 压缩节点,根 = 未被任何 childIds 引用者 */
+function buildView(
+  summaries: MemSummary[],
+  chat: STMessage[] | null,
+): { byId: Map<string, ViewNode>; roots: ViewNode[] } {
+  const byId = new Map<string, ViewNode>();
+
+  if (chat) {
+    for (let i = 0; i < chat.length; i++) {
+      if (!leafValid(chat[i])) continue; // 陈旧叶子不进视图 → 不注入
+      const leaf = getLeaf(chat[i]) as LeafExtra;
+      byId.set(leaf.id, {
+        id: leaf.id,
+        kind: 'leaf',
+        text: leaf.text,
+        timeLabel: leaf.timeLabel,
+        createdAt: leaf.createdAt,
+        childIds: [],
+        msgIndex: i,
+        active: leafActiveAt(chat, i),
+      });
+    }
   }
-  // 覆盖的消息都已隐藏(或都已不存在)→ 启用
-  return sawExisting || coveredIndices.length > 0;
+  for (const s of summaries) {
+    byId.set(s.id, {
+      id: s.id,
+      kind: 'comp',
+      text: s.text,
+      timeLabel: s.timeLabel,
+      createdAt: s.createdAt,
+      childIds: s.childIds ?? [],
+      msgIndex: -1,
+      active: false,
+    });
+  }
+
+  const referenced = new Set<string>();
+  for (const s of summaries) for (const c of s.childIds ?? []) referenced.add(c);
+  const roots = [...byId.values()].filter(n => !referenced.has(n.id));
+  return { byId, roots };
+}
+
+/**
+ * 通用节点选择:每个「合格」叶子由其祖先链上**最高的、全部后代叶子都合格**的节点代表一次
+ * (省 token);否则压缩节点降级、逐子递归。叶子「合格」由 leafEligible 判定。
+ *  - 注入场景:合格 = 已隐藏(active),用 selectInjectionNodes。
+ *  - 分析历史场景:合格 = 楼层在被分析楼之前,用 selectHistoryNodesBefore。
+ */
+function selectNodes(
+  summaries: MemSummary[],
+  chat: STMessage[] | null,
+  leafEligible: (n: ViewNode) => boolean,
+): ViewNode[] {
+  const { byId, roots } = buildView(summaries, chat);
+
+  const collectLeaves = (n: ViewNode, acc: ViewNode[]): void => {
+    if (n.kind === 'leaf') {
+      acc.push(n);
+      return;
+    }
+    for (const cid of n.childIds) {
+      const c = byId.get(cid);
+      if (c) collectLeaves(c, acc);
+    }
+  };
+  const allDescEligible = (n: ViewNode): boolean => {
+    const ls: ViewNode[] = [];
+    collectLeaves(n, ls);
+    return ls.length > 0 && ls.every(leafEligible);
+  };
+
+  const chosen: ViewNode[] = [];
+  const visit = (n: ViewNode): void => {
+    if (n.kind === 'leaf') {
+      if (leafEligible(n)) chosen.push(n);
+      return;
+    }
+    if (allDescEligible(n)) {
+      chosen.push(n);
+      return;
+    }
+    for (const cid of n.childIds) {
+      const c = byId.get(cid);
+      if (c) visit(c);
+    }
+  };
+  for (const r of roots) visit(r);
+
+  // 时间序拼接:叶子用楼层序;压缩节点用其最早后代叶子的楼层序
+  const sortKey = (n: ViewNode): number => {
+    if (n.kind === 'leaf') return n.msgIndex;
+    const ls: ViewNode[] = [];
+    collectLeaves(n, ls);
+    return ls.length ? Math.min(...ls.map(l => l.msgIndex)) : Number.MAX_SAFE_INTEGER;
+  };
+  return chosen.sort((a, b) => sortKey(a) - sortKey(b));
+}
+
+/**
+ * 选出注入用的节点:每个「已启用(已隐藏)」叶子由其祖先链最高的全-启用节点代表一次;
+ * 窗口内仍发全文的叶子不注入。
+ */
+export function selectInjectionNodes(summaries: MemSummary[], chat: STMessage[] | null): ViewNode[] {
+  return selectNodes(summaries, chat, n => n.active);
+}
+
+/**
+ * 选出「被分析楼之前」的历史节点,供生成摘要时注入上下文:
+ * 楼层 < beforeIndex 的叶子,由其祖先链最高的「全部后代都在 beforeIndex 之前」的节点代表一次
+ * (有总结就用总结的压缩文本)。不要求隐藏。
+ */
+export function selectHistoryNodesBefore(
+  summaries: MemSummary[],
+  chat: STMessage[] | null,
+  beforeIndex: number,
+): ViewNode[] {
+  return selectNodes(summaries, chat, n => n.msgIndex >= 0 && n.msgIndex < beforeIndex);
+}
+
+/** 把选出的节点拼成历史摘要文本块(带时间标签前缀);空则返回空串 */
+export function renderHistoryNodes(nodes: ViewNode[]): string {
+  return nodes.map(n => (n.timeLabel ? `【${n.timeLabel}】${n.text}` : n.text)).join('\n\n');
 }
 
 /**
@@ -55,13 +183,10 @@ export function buildInjectionText(): string {
   const parts: string[] = [];
   const chat = getContext()?.chat ?? null;
 
-  // A. 历史摘要:只注入「已启用」(覆盖楼层已隐藏)的,按时间先后拼接
-  const sums = [...memory.summaries]
-    .filter(s => isSummaryActive(s.coveredIndices, chat))
-    .sort((a, b) => a.createdAt - b.createdAt);
+  // A. 历史摘要:从森林选「最高存活压缩层」节点(被收纳的不重复、窗口内全文叶子不注入)
+  const sums = selectInjectionNodes(memory.summaries, chat);
   if (sums.length) {
-    const body = sums.map(s => (s.timeLabel ? `【${s.timeLabel}】${s.text}` : s.text)).join('\n\n');
-    parts.push(`[历史剧情摘要]\n${body}`);
+    parts.push(`[历史剧情摘要]\n${renderHistoryNodes(sums)}`);
   }
 
   // B. 当前结构化状态

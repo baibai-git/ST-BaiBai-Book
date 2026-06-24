@@ -29,7 +29,7 @@ const INHERITED_RESET: Record<string, string> = {
   'text-indent': '0',
   'text-shadow': 'none',
   'white-space': 'normal',
-  color: '#1a1f24',
+  color: '#1c242c',
   direction: 'ltr',
 };
 

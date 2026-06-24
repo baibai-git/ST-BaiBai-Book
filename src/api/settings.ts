@@ -33,7 +33,9 @@ export interface ApiSettings {
   keepRecent: number;
   /** 自动隐藏被摘要覆盖的消息 */
   autoHide: boolean;
-  /** 摘要积累到 N 条时合并成一条总结(0=关闭) */
+  /** 叶子摘要积累到 N 条时,压成一条 L1 总结(L0→L1 阈值,0=关闭) */
+  leafBatchThreshold: number;
+  /** L1 及以上每积累到 N 条时,压成上一层总结(L≥1→L+1 阈值,0=关闭) */
   resummaryThreshold: number;
 }
 
@@ -46,7 +48,8 @@ function defaults(): ApiSettings {
     autoSummaryEnabled: false,
     keepRecent: 5,
     autoHide: true,
-    resummaryThreshold: 10,
+    leafBatchThreshold: 12,
+    resummaryThreshold: 7,
   };
 }
 

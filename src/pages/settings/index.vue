@@ -3,13 +3,8 @@ import Collapsible from '@/components/Collapsible.vue';
 import Icon from '@/components/Icon.vue';
 import { fetchModels, testChannel } from '@/api/client';
 import { apiSettings, newChannel, type ApiChannel } from '@/api/settings';
-import { ui, type NavPosition, type ThemeName } from '@/state/ui';
+import { ui, THEMES, type NavPosition } from '@/state/ui';
 import { ref } from 'vue';
-
-const themes: { value: ThemeName; label: string; icon: string }[] = [
-  { value: 'day', label: '日间', icon: 'sun' },
-  { value: 'night', label: '夜间', icon: 'moon' },
-];
 
 const navOptions: { value: NavPosition; label: string }[] = [
   { value: 'auto', label: '自动' },
@@ -66,9 +61,9 @@ async function pullModels(ch: ApiChannel) {
           <div class="bbs-field-head">
             <span class="bbs-field-label">主题</span>
           </div>
-          <div class="bbs-segmented">
+          <div class="bbs-segmented bbs-segmented-wrap">
             <button
-              v-for="t in themes"
+              v-for="t in THEMES"
               :key="t.value"
               type="button"
               class="bbs-seg"
@@ -188,10 +183,15 @@ async function pullModels(ch: ApiChannel) {
         </label>
         <p class="bbs-field-hint">滑动窗口:最近 N 条 AI 消息发送全文;更早的自动生成摘要并从主对话隐藏,摘要会以系统提示注入回上下文,主模型仍可感知。</p>
         <label class="bbs-num-row">
-          <span class="bbs-field-label">总结阈值(0=关闭)</span>
+          <span class="bbs-field-label">摘要压成总结阈值(0=关闭)</span>
+          <input v-model.number="apiSettings.leafBatchThreshold" class="bbs-input bbs-num" type="number" min="0" />
+        </label>
+        <p class="bbs-field-hint">楼层摘要积累到这么多条时,把它们压成一条上层「总结」(底层摘要保留,可随时删总结展开)。</p>
+        <label class="bbs-num-row">
+          <span class="bbs-field-label">总结再压缩阈值(0=关闭)</span>
           <input v-model.number="apiSettings.resummaryThreshold" class="bbs-input bbs-num" type="number" min="0" />
         </label>
-        <p class="bbs-field-hint">摘要积累到这么多条时,合并压缩成一条总结。</p>
+        <p class="bbs-field-hint">总结(及更高层)积累到这么多条时,继续向上压成更高一层总结,逐级递归。</p>
       </Collapsible>
 
       <!-- 向量记忆(待填充) -->
@@ -241,6 +241,11 @@ async function pullModels(ch: ApiChannel) {
   background: var(--bbs-surface-2);
   border-radius: var(--bbs-radius);
 }
+/* 主题选项可能较多/标签较长:允许换行,窄屏下不溢出 */
+.bbs-segmented-wrap {
+  display: flex;
+  flex-wrap: wrap;
+}
 .bbs-seg {
   display: inline-flex;
   align-items: center;
@@ -263,7 +268,7 @@ async function pullModels(ch: ApiChannel) {
 .bbs-seg.is-on {
   background: var(--bbs-surface);
   color: var(--bbs-accent);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 1px 3px oklch(0 0 0 / 0.08);
 }
 
 /* 任务指派 */

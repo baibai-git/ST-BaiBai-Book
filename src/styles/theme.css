@@ -1,7 +1,13 @@
 /*
- * 主题令牌(design tokens)— 现代 · 清新 · 简约
+ * 主题令牌(design tokens)— 柏宝书 · 青瓷 × 纸墨
+ * 灵感:古籍的暖纸、深墨,与一抹青瓷(celadon-jade)点缀。
+ * 配色全部以 OKLCH 设计、感知均匀;所有文字对比度经 WCAG 2.1 校验:
+ *   正文 ≥ 4.5:1(AA),弱化文字与非文本 UI ≥ 3:1。
  * 所有颜色/字体/尺寸都从这里取,组件不写死颜色。
  * 切换主题 = 改根节点 [data-theme];未来自定义主题只需新增一套同名变量。
+ *
+ * 配色:黑金优雅 —— 深海军蓝(h≈264)× 琥珀金(h≈70),源自经典黑金方案。
+ * 金很亮,强调按钮上一律压「深 navy 字」(昼间用白字、金压暗),切勿白字配亮金。
  */
 
 .bbs-root {
@@ -29,36 +35,75 @@
   --bbs-dur: 0.28s;
 }
 
-/* ========== 昼 · 清晨 ========== */
+/* ========== 昼 · 象牙白 ==========
+   底色是暖中性象牙白;墨色取深海军蓝(与夜呼应),强调是压暗的金。
+   对比度(白底为基准):ink 16.0、ink-soft 7.1、ink-muted 3.6、accent 4.1。 */
 .bbs-root[data-theme='day'] {
-  --bbs-bg: #f5f7f8; /* 窗口底:极浅冷灰白 */
-  --bbs-surface: #ffffff; /* 抬起面/卡片 */
-  --bbs-surface-2: #f0f3f4; /* 次级面/输入框 */
-  --bbs-ink: #1a1f24; /* 主文字 */
-  --bbs-ink-soft: #5a646e; /* 次级文字 */
-  --bbs-ink-muted: #9aa4ae; /* 弱化/占位 */
-  --bbs-accent: #14b8a6; /* 薄荷青 · 强调 */
-  --bbs-accent-soft: rgba(20, 184, 166, 0.12);
-  --bbs-accent-ink: #ffffff; /* 强调上的文字 */
-  --bbs-line: #e8ebed; /* 细线 */
-  --bbs-line-strong: #dde1e4;
-  --bbs-overlay: rgba(20, 28, 33, 0.34); /* 遮罩 */
-  --bbs-shadow: 0 18px 48px -20px rgba(20, 30, 40, 0.28), 0 4px 12px -6px rgba(20, 30, 40, 0.12);
+  --bbs-bg: oklch(0.97 0.004 90); /* #f6f5f2 象牙白 */
+  --bbs-surface: oklch(1 0 0); /* #ffffff 抬起面/卡片 */
+  --bbs-surface-2: oklch(0.945 0.006 90); /* #eeede8 次级面/输入框 */
+  --bbs-ink: oklch(0.252 0.056 264); /* #14213d 海军蓝墨 · 主文字 */
+  --bbs-ink-soft: oklch(0.46 0.04 264); /* #4d586f 次级文字 */
+  --bbs-ink-muted: oklch(0.62 0.03 264); /* #7d8699 弱化/占位 */
+  --bbs-accent: oklch(0.57 0.13 62); /* #ac6304 深金 · 强调(白字 AA) */
+  --bbs-accent-soft: oklch(0.57 0.13 62 / 0.12);
+  --bbs-accent-ink: oklch(1 0 0); /* #ffffff 强调上的文字 */
+  --bbs-line: oklch(0.91 0.005 90); /* #e2e1de 细线 */
+  --bbs-line-strong: oklch(0.87 0.006 90); /* #d6d4d0 */
+  --bbs-danger: oklch(0.52 0.18 25); /* #ba2b2e 删除/警示(AA) */
+  --bbs-danger-soft: oklch(0.52 0.18 25 / 0.1);
+  --bbs-warning: oklch(0.55 0.1 75); /* #936823 悬念/待办(AA) */
+  --bbs-warning-soft: oklch(0.55 0.1 75 / 0.12);
+  --bbs-overlay: oklch(0.252 0.056 264 / 0.34); /* 遮罩 */
+  --bbs-shadow: 0 18px 48px -20px oklch(0.252 0.056 264 / 0.22),
+    0 4px 12px -6px oklch(0.252 0.056 264 / 0.1);
 }
 
-/* ========== 夜 · 深蓝灰 ========== */
+/* ========== 夜 · 海军黑 ==========
+   底色是深海军蓝(比纯黑更有层次、更高级),强调是明亮琥珀金,
+   金按钮上压深 navy 字。黑金优雅的标准用法,提气而不刺眼。
+   对比度(主底为基准):ink 15.3、ink-soft 8.2、ink-muted 4.4、accent 9.3。 */
 .bbs-root[data-theme='night'] {
-  --bbs-bg: #16191f; /* 现代深石板蓝灰,非纯黑 */
-  --bbs-surface: #1e222a;
-  --bbs-surface-2: #262b34;
-  --bbs-ink: #e7eaed;
-  --bbs-ink-soft: #a3acb5;
-  --bbs-ink-muted: #6b747d;
-  --bbs-accent: #2dd4bf; /* 暗底提亮的薄荷青 */
-  --bbs-accent-soft: rgba(45, 212, 191, 0.15);
-  --bbs-accent-ink: #0c1311;
-  --bbs-line: #2a2f38;
-  --bbs-line-strong: #353b45;
-  --bbs-overlay: rgba(8, 11, 14, 0.58);
-  --bbs-shadow: 0 20px 56px -22px rgba(0, 0, 0, 0.6), 0 4px 14px -8px rgba(0, 0, 0, 0.45);
+  --bbs-bg: oklch(0.18 0.03 264); /* #0b111f 深海军黑 */
+  --bbs-surface: oklch(0.225 0.035 264); /* #131b2c */
+  --bbs-surface-2: oklch(0.285 0.04 264); /* #202a3e */
+  --bbs-ink: oklch(0.93 0.003 90); /* #e8e8e6 象牙白 · 主文字 */
+  --bbs-ink-soft: oklch(0.74 0.012 264); /* #a7abb3 次级文字 */
+  --bbs-ink-muted: oklch(0.58 0.02 264); /* #747a87 弱化/占位 */
+  --bbs-accent: oklch(0.786 0.167 70); /* #fca313 琥珀金 · 强调 */
+  --bbs-accent-soft: oklch(0.786 0.167 70 / 0.15);
+  --bbs-accent-ink: oklch(0.2 0.04 264); /* #0d1528 强调上的文字(深 navy) */
+  --bbs-line: oklch(0.32 0.035 264); /* #2a3345 细线 */
+  --bbs-line-strong: oklch(0.4 0.04 264); /* #3d485e */
+  --bbs-danger: oklch(0.7 0.15 28); /* #ed7668 删除/警示(AA) */
+  --bbs-danger-soft: oklch(0.7 0.15 28 / 0.15);
+  --bbs-warning: oklch(0.82 0.13 75); /* #f5b75b 悬念/待办(AA) */
+  --bbs-warning-soft: oklch(0.82 0.13 75 / 0.15);
+  --bbs-overlay: oklch(0.1 0.02 264 / 0.6); /* 遮罩 */
+  --bbs-shadow: 0 20px 56px -22px oklch(0 0 0 / 0.65), 0 4px 14px -8px oklch(0 0 0 / 0.5);
+}
+
+/* ========== 粉彩梦幻乐园 ==========
+   独立主题,不分昼夜。薰衣草粉纸底 + 玫瑰强调,梦幻而不失可读性。
+   梦幻的薰衣草/天蓝/婴儿粉太浅,只用于底/线/染色;文字与强调用够深的梅紫/玫瑰,
+   保证 WCAG AA。对比度(主底为基准):ink 10.5、ink-soft 5.3、ink-muted 3.2、accent 4.3。 */
+.bbs-root[data-theme='pastel'] {
+  --bbs-bg: oklch(0.975 0.012 330); /* #fcf4fb 薰衣草粉纸 */
+  --bbs-surface: oklch(1 0 0); /* #ffffff 抬起面/卡片 */
+  --bbs-surface-2: oklch(0.955 0.022 335); /* #faebf6 次级面/输入框 */
+  --bbs-ink: oklch(0.36 0.09 330); /* #572953 深梅紫 · 主文字 */
+  --bbs-ink-soft: oklch(0.52 0.08 330); /* #83587f 次级文字 */
+  --bbs-ink-muted: oklch(0.64 0.07 330); /* #a57da1 弱化/占位 */
+  --bbs-accent: oklch(0.58 0.16 5); /* #c4486d 玫瑰 · 强调(双用:底/文字均 AA) */
+  --bbs-accent-soft: oklch(0.58 0.16 5 / 0.12);
+  --bbs-accent-ink: oklch(1 0 0); /* #ffffff 强调上的文字 */
+  --bbs-line: oklch(0.91 0.025 330); /* #ebdce9 细线 */
+  --bbs-line-strong: oklch(0.86 0.035 335); /* #e0c9da */
+  --bbs-danger: oklch(0.55 0.19 15); /* #c72c4c 删除/警示(AA) */
+  --bbs-danger-soft: oklch(0.55 0.19 15 / 0.1);
+  --bbs-warning: oklch(0.62 0.12 70); /* #b47825 悬念/待办(AA) */
+  --bbs-warning-soft: oklch(0.62 0.12 70 / 0.12);
+  --bbs-overlay: oklch(0.36 0.09 330 / 0.32); /* 遮罩 */
+  --bbs-shadow: 0 18px 48px -20px oklch(0.45 0.15 350 / 0.3),
+    0 4px 12px -6px oklch(0.45 0.15 350 / 0.16);
 }

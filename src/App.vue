@@ -2,8 +2,14 @@
 import Icon from '@/components/Icon.vue';
 import NavBar from '@/components/NavBar.vue';
 import { getPage } from '@/pages/registry';
-import { closeBook, lastOpenedAt, toggleTheme, ui } from '@/state/ui';
+import { closeBook, cycleTheme, lastOpenedAt, THEMES, ui } from '@/state/ui';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
+
+// 题首主题按钮:显示「下一个」主题的图标与名,点击即切换到它
+const nextTheme = computed(() => {
+  const i = THEMES.findIndex(t => t.value === ui.theme);
+  return THEMES[(i + 1) % THEMES.length];
+});
 
 // 是否窄屏(移动端):用于 nav 'auto' 的方向判定 + 抽屉手势开关。
 // matchMedia 变化 Vue 不会自动追踪,用 ref 桥接成响应式。
@@ -105,8 +111,8 @@ const windowStyle = computed(() => {
             <header class="bbs-head">
               <span class="bbs-brand-name">柏宝书</span>
               <div class="bbs-head-actions">
-                <button class="bbs-icon-btn" type="button" :title="ui.theme === 'day' ? '夜间' : '日间'" @click="toggleTheme">
-                  <Icon :name="ui.theme === 'day' ? 'moon' : 'sun'" />
+                <button class="bbs-icon-btn" type="button" :title="`切换主题:${nextTheme.label}`" @click="cycleTheme">
+                  <Icon :name="nextTheme.icon" />
                 </button>
                 <button class="bbs-icon-btn" type="button" title="关闭" @click="closeBook">
                   <Icon name="close" />

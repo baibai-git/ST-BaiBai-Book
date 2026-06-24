@@ -3,3 +3,4 @@ node_modules/
 .DS_Store
 .preview/
 .preview/shot-*.png
+.claude

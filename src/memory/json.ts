@@ -7,8 +7,8 @@ export function extractJsonObject<T = unknown>(raw: string): T | null {
 
   let s = raw.trim();
 
-  // 去掉 <think>...</think> 思维链
-  s = s.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  // 去掉 <think>…</think> / <thinking>…</thinking> 思维链(大小写不敏感)
+  s = s.replace(/<think(?:ing)?\b[\s\S]*?<\/think(?:ing)?>/gi, '').trim();
 
   // 去掉 ```json ... ``` / ``` ... ``` 围栏
   const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);

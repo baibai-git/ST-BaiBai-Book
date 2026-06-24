@@ -10,7 +10,8 @@ export interface STMessage {
   is_system: boolean;
   mes: string;
   send_date?: string;
-  extra?: Record<string, unknown>;
+  /** 消息私有数据。柏宝书在这里存 bbs_hidden(隐藏标记) 与 bbs_leaf(叶子摘要) */
+  extra?: Record<string, unknown> & { bbs_leaf?: import('@/memory/types').LeafExtra; bbs_hidden?: boolean };
 }
 
 export interface STEventSource {
@@ -55,6 +56,27 @@ export interface STContext {
   ) => void;
   /** 执行斜杠命令(如 /hide 0-3)。ST 稳定 API。 */
   executeSlashCommandsWithOptions?: (command: string, options?: Record<string, unknown>) => Promise<unknown>;
+  /**
+   * 按文本激活世界书条目(关键词触发 + constant 常驻)。ST 稳定 API(world-info.js)。
+   * chat 为待扫描文本数组(由旧到新);isDryRun=true 仅扫描不触发副作用事件。
+   */
+  getWorldInfoPrompt?: (
+    chat: string[],
+    maxContext: number,
+    isDryRun: boolean,
+    globalScanData?: Record<string, unknown>,
+  ) => Promise<{
+    worldInfoBefore?: string;
+    worldInfoAfter?: string;
+    worldInfoString?: string;
+    /** @深度条目:{depth, role, entries: string[]}。很多蓝灯条目在这里 */
+    worldInfoDepth?: Array<{ depth?: number; role?: number; entries?: string[] }>;
+    /** 作者注前/后条目(content 字符串数组) */
+    anBefore?: string[];
+    anAfter?: string[];
+  }>;
+  /** 主上下文最大 token(给 getWorldInfoPrompt 的预算参数) */
+  maxContext?: number;
   // 兼容旧式命名
   event_types?: STEventTypes;
   [k: string]: any;

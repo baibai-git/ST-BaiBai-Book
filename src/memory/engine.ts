@@ -3,12 +3,12 @@ import { requestCompletion } from '@/api/client';
 import { apiSettings, getChannelForTask } from '@/api/settings';
 import type { STMessage } from '@/st/context';
 import { getContext } from '@/st/context';
-import { addSummary, applyDelta } from './apply';
+import { addSummary, deriveMemory, finalizeDelta, getLeaf, leafHash, leafValid, makeLeafId, pruneBrokenComps, stripHtml } from './apply';
 import { extractJsonObject } from './json';
-import { refreshInjection } from './inject';
-import { buildResummaryPrompt, buildSummaryPrompt } from './prompts';
-import { memory, saveMemory } from './store';
-import type { SummaryDelta } from './types';
+import { refreshInjection, renderHistoryNodes, selectHistoryNodesBefore } from './inject';
+import { buildResummaryPrompt, buildSummaryPrompt, buildWorldInfoSystem, THINKING_CHECKLIST, THINKING_PREFILL } from './prompts';
+import { memory, recomputeDerived, scheduleLeafFlush } from './store';
+import type { LeafExtra, SummaryDelta } from './types';
 
 /** 引擎运行状态(供 UI 显示) */
 import { reactive } from 'vue';
@@ -20,38 +20,75 @@ export const engineState = reactive({
 
 let busy = false;
 
-/**
- * 收集"尚未被任何摘要覆盖"的消息索引。
- */
-function uncoveredIndices(chat: STMessage[]): number[] {
-  const covered = new Set<number>();
-  for (const s of memory.summaries) {
-    for (const i of s.coveredIndices) covered.add(i);
-  }
-  const out: number[] = [];
-  for (let i = 0; i < chat.length; i++) {
-    if (!covered.has(i)) out.push(i);
-  }
-  return out;
-}
-
-/** 把消息渲染成给摘要模型的文本 */
+/** 把消息渲染成给摘要模型的文本(stripHtml 复用 apply 的清洗,与 leafHash 一致) */
 function renderMessages(chat: STMessage[], indices: number[], name1: string, name2: string): string {
   return indices
     .map(i => {
       const m = chat[i];
       if (!m) return '';
+      // 双标:既标发言方(用户/角色),又带人名 —— 摘要正文用人名,群聊也能区分谁说的
+      const tag = m.is_user ? '用户' : '角色';
       const who = m.is_user ? name1 || 'User' : m.name || name2 || 'Char';
-      return `【${who}】${stripHtml(m.mes)}`;
+      return `【${tag}·${who}】${stripHtml(m.mes)}`;
     })
     .filter(Boolean)
     .join('\n\n');
 }
 
-function stripHtml(s: string): string {
-  return String(s ?? '')
-    .replace(/<[^>]+>/g, '')
-    .trim();
+/**
+ * 按本轮待摘文本激活世界书条目(关键词触发 + constant 蓝灯),返回设定文本。
+ * 走 ST 的 getWorldInfoPrompt(isDryRun=true,只扫描不触发副作用事件)。
+ * 关键:蓝灯/相关条目可能落在 before、after、depth(@深度)、作者注 任一位置,全部提取,
+ * 否则会漏掉大量「@深度」位置的蓝灯条目(只取 before/after 会拿到空)。
+ * 取不到 API / 出错 / 无激活条目 / 角色卡无世界书 → 返回空串(降级,不影响摘要正常运行)。
+ */
+async function fetchWorldInfo(chat: STMessage[], targets: number[], name1: string, name2: string): Promise<string> {
+  const ctx = getContext();
+  const fn = ctx?.getWorldInfoPrompt;
+  if (typeof fn !== 'function') return '';
+  try {
+    // 扫描文本:本轮各楼正文(清洗后)。用人名前缀帮助关键词命中角色名。
+    const scanText = targets
+      .map(i => {
+        const m = chat[i];
+        if (!m) return '';
+        const who = m.is_user ? name1 || 'User' : m.name || name2 || 'Char';
+        return `${who}: ${stripHtml(m.mes)}`;
+      })
+      .filter(Boolean);
+    if (!scanText.length) return '';
+    // ST 内部:WI 实际预算 = world_info_budget(默认25%) × maxContext,超出即截断条目(蓝灯也不例外)。
+    // 摘要场景要「激活的一条都不漏」,故传一个极大的 maxContext,让预算大到不可能溢出。
+    // (若用户设了 world_info_budget_cap 上限,仍会被它封顶——那是用户显式的硬上限,尊重之。)
+    const HUGE_CONTEXT = 1_000_000_000;
+    const res = await fn(scanText, HUGE_CONTEXT, true);
+    if (!res) return '';
+
+    const chunks: string[] = [];
+    if (typeof res.worldInfoBefore === 'string') chunks.push(res.worldInfoBefore);
+    if (typeof res.worldInfoAfter === 'string') chunks.push(res.worldInfoAfter);
+    // @深度条目:{depth, role, entries: string[]} —— 大量蓝灯在此
+    for (const d of res.worldInfoDepth ?? []) {
+      for (const e of d?.entries ?? []) if (typeof e === 'string') chunks.push(e);
+    }
+    for (const e of res.anBefore ?? []) if (typeof e === 'string') chunks.push(e);
+    for (const e of res.anAfter ?? []) if (typeof e === 'string') chunks.push(e);
+
+    // 去重 + 去空
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const c of chunks) {
+      const t = c.trim();
+      if (t && !seen.has(t)) {
+        seen.add(t);
+        out.push(t);
+      }
+    }
+    return out.join('\n\n').trim();
+  } catch (e) {
+    console.log('[柏宝书] 世界书激活失败(降级为不带设定):', e);
+    return '';
+  }
 }
 
 /**
@@ -90,27 +127,31 @@ export function resolveKeepStart(chat: STMessage[]): number {
 }
 
 /**
- * 找出"待摘要"的 AI 楼层:**所有**尚未被任何摘要覆盖的 AI 楼(由旧到新)。
- * 注意:摘要的「生成」与「使用」解耦——每个 AI 楼层都尽早生成摘要(包括仍在保留窗口、
- * 当前发全文的楼层),只是窗口内的摘要暂存不注入;待楼层滑出窗口被隐藏时,其摘要才启用。
- * 所以这里不按 keepStart 设限,保证摘要提前备好、滑出即可顶上。
+ * 找出"待摘要"的 AI 楼层:AI 楼且没有有效叶子(无叶 / 陈旧)。由旧到新。
+ * 新消息、regenerate 新 swipe、编辑过的楼,都因 leafValid=false 自然落入。
  */
 export function pendingAiFloors(chat: STMessage[]): number[] {
-  const uncovered = new Set(uncoveredIndices(chat));
   const out: number[] = [];
   for (let i = 0; i < chat.length; i++) {
-    if (uncovered.has(i) && isAiFloor(chat[i])) out.push(i);
+    if (isAiFloor(chat[i]) && !leafValid(chat[i])) out.push(i);
   }
   return out;
 }
 
+/** 摘要后的统一收尾:滑动隐藏 + 刷新注入 */
+async function afterSummaryHideAndInject(chat: STMessage[]): Promise<void> {
+  if (apiSettings.autoHide) {
+    await applyWindowHide(chat);
+  }
+  refreshInjection();
+}
+
 /**
- * 自动摘要检查:由用户发消息 / AI 回复事件触发。
- * 生成与使用解耦:① 给所有未覆盖 AI 楼生成摘要(含窗口内的,提前备好);
- * ② 保留窗口之外的楼层隐藏(原文踢出上下文);③ 只注入已隐藏楼层的摘要。
+ * 全量补摘:给所有「无有效叶子」的 AI 楼逐个生成摘要。
+ * **仅供摘要页「立即摘要」按钮手动调用**——自动触发改用 maybeSummarizePrevAi(单楼增量)。
  */
 export async function checkAutoSummary(): Promise<void> {
-  console.log('[柏宝书] checkAutoSummary 进入', { enabled: apiSettings.autoSummaryEnabled, busy });
+  console.log('[柏宝书] checkAutoSummary(手动全量) 进入', { enabled: apiSettings.autoSummaryEnabled, busy });
   if (!apiSettings.autoSummaryEnabled) { console.log('[柏宝书] 早退:自动摘要未开启'); return; }
   if (busy) { console.log('[柏宝书] 早退:busy 锁'); return; }
 
@@ -121,18 +162,59 @@ export async function checkAutoSummary(): Promise<void> {
 
   const floors = pendingAiFloors(chat);
   console.log('[柏宝书] 待摘要楼层 =', floors);
-  // 1) 给所有尚未覆盖的 AI 楼逐个生成摘要(包括仍在保留窗口的,暂存不注入)
   for (const floor of floors) {
     await runSummary(floor);
   }
+  await afterSummaryHideAndInject(chat);
+}
 
-  // 2) 滑动隐藏:保留窗口之外、已被摘要覆盖的消息踢出主上下文
-  if (apiSettings.autoHide) {
-    await applyWindowHide(chat);
+/**
+ * 自动触发的单楼增量摘要:只确保「上一条已定稿 AI 消息」有摘要,且只摘那一条。
+ * @param skipLastAi true 时跳过正在操作的末尾 AI 消息(翻页/重新生成场景),取它之前的那条 AI。
+ *
+ * 规则(对齐用户语义):
+ *  - 发消息:目标 = 最后一条 AI 消息(它刚定稿)。skipLastAi=false。
+ *  - 翻页/重新生成:末尾 AI 正在被改写(易变),跳过它,目标 = 之前那条 AI。skipLastAi=true。
+ *    例:#0 开场白、#1 用户、#2 最新 AI,在 #2 翻页 → 跳过 #2 → 目标 #0。
+ */
+export async function maybeSummarizePrevAi(skipLastAi: boolean): Promise<void> {
+  if (!apiSettings.autoSummaryEnabled) return;
+  if (busy) return;
+  const ctx = getContext();
+  if (!ctx) return;
+  const chat = ctx.chat ?? [];
+  if (chat.length === 0) return;
+
+  const target = prevAiFloor(chat, skipLastAi);
+  if (target < 0) return; // 没有可摘的「上一条 AI」
+  if (leafValid(chat[target])) {
+    // 上一条 AI 已有有效摘要 → 无需重摘,但仍跑收尾(隐藏窗口可能变化)
+    await afterSummaryHideAndInject(chat);
+    return;
   }
+  await runSummary(target);
+  await afterSummaryHideAndInject(chat);
+}
 
-  // 3) 刷新注入(只注入已隐藏楼层的摘要——见 inject.ts)
-  refreshInjection();
+/**
+ * 找「上一条已定稿 AI 消息」的索引。
+ * skipLastAi=false → 最后一条 AI 楼;skipLastAi=true → 跳过最后一条 AI 楼,取再之前那条。
+ * 找不到返回 -1。
+ */
+export function prevAiFloor(chat: STMessage[], skipLastAi: boolean): number {
+  let lastAi = -1;
+  for (let i = chat.length - 1; i >= 0; i--) {
+    if (isAiFloor(chat[i])) {
+      lastAi = i;
+      break;
+    }
+  }
+  if (lastAi < 0) return -1;
+  if (!skipLastAi) return lastAi;
+  for (let i = lastAi - 1; i >= 0; i--) {
+    if (isAiFloor(chat[i])) return i;
+  }
+  return -1;
 }
 
 /** 把递增的索引列表合并成连续区间(供 /hide 0-3 这种批量参数用) */
@@ -156,7 +238,7 @@ export function coalesceRanges(indices: number[]): Array<[number, number]> {
 async function applyWindowHide(chat: STMessage[]): Promise<void> {
   const keepStart = resolveKeepStart(chat);
   if (keepStart <= 0) return;
-  const covered = coveredSet();
+  const covered = coveredSet(chat);
   const ctx = getContext();
   if (!ctx) return;
 
@@ -215,8 +297,8 @@ export async function runSummary(aiFloor: number): Promise<void> {
   if (!isAiFloor(chat[aiFloor])) { console.log('[柏宝书] runSummary 早退:非 AI 楼', aiFloor); return; }
   console.log('[柏宝书] runSummary 即将发请求,渠道 =', channel.name, 'model =', channel.model);
 
-  // 覆盖范围:本 AI 楼层 + 它前面紧邻的、尚未覆盖的(用户)楼层
-  const covered = new Set(coveredSet());
+  // 覆盖范围(喂模型的上下文):本 AI 楼层 + 它前面紧邻的、尚未覆盖的(用户)楼层
+  const covered = coveredSet(chat);
   const targets: number[] = [aiFloor];
   for (let i = aiFloor - 1; i >= 0; i--) {
     if (covered.has(i)) break;
@@ -229,38 +311,61 @@ export async function runSummary(aiFloor: number): Promise<void> {
   engineState.lastError = '';
   try {
     const content = renderMessages(chat, targets, ctx.name1, ctx.name2);
-    const openPlans = memory.plans.filter(p => p.status === 'open').map(p => ({ kind: p.kind, content: p.content }));
+
+    // 截止到「被分析楼段之前」的状态与历史(不泄漏未来:重摘早期楼时排除其后叶子)
+    const beforeIndex = targets[0];
+    const stateBefore = deriveMemory(chat, beforeIndex);
+    const history = renderHistoryNodes(selectHistoryNodesBefore(memory.summaries, chat, beforeIndex));
+
+    // 世界书:按本轮文本激活相关条目(含 constant 常驻),给摘要模型设定依据,避免与世界观矛盾
+    const worldInfo = await fetchWorldInfo(chat, targets, ctx.name1, ctx.name2);
+
+    // 未了结计划的有序列表:顺序即提示词里的 p1/p2…,用于把 AI 的 resolve 短序号翻译成稳定 id
+    const openPlansOrdered = stateBefore.plans.filter(p => p.status === 'open');
     const prompt = buildSummaryPrompt({
       user: ctx.name1,
       char: ctx.name2,
-      time: memory.state.time,
-      location: memory.state.location,
-      items: memory.items.map(i => ({ name: i.name, qty: i.qty, desc: i.desc })),
-      openPlans,
+      time: stateBefore.state.time,
+      location: stateBefore.state.location,
+      items: stateBefore.items.map(i => ({ name: i.name, qty: i.qty, desc: i.desc })),
+      openPlans: openPlansOrdered.map(p => ({ kind: p.kind, content: p.content })),
+      history,
       content,
     });
 
-    const messages: ChatMsg[] = [{ role: 'user', content: prompt }];
+    // 组装:世界设定(独立 system,有才加)→ 主提示 → 思考清单(system)→ assistant 预填 <thinking>
+    const messages: ChatMsg[] = [];
+    if (worldInfo) messages.push({ role: 'system', content: buildWorldInfoSystem(worldInfo) });
+    messages.push(
+      { role: 'user', content: prompt },
+      { role: 'system', content: THINKING_CHECKLIST },
+      { role: 'assistant', content: THINKING_PREFILL },
+    );
     const raw = await requestCompletion(channel, messages);
     const delta = extractJsonObject<SummaryDelta>(raw);
     if (!delta || !delta.summary) {
       throw new Error('摘要解析失败:未得到有效 JSON 或缺 summary 字段');
     }
 
-    // 先记录摘要拿到 id,再施加结构化增量(给衍生物品/计划打来源标记,便于删除时连带清除)
-    const rec = addSummary({
+    // 固化 delta(resolve 短序号→稳定 plan id),写成叶子挂到 AI 楼的 extra(随消息/swipe 跟随)
+    const storedDelta = finalizeDelta(delta, openPlansOrdered);
+    const leaf: LeafExtra = {
+      id: makeLeafId(),
       text: delta.summary.trim(),
-      coveredIndices: targets,
-      depth: 1,
-      auto: true,
+      delta: storedDelta,
       timeLabel: delta.time || memory.state.time || undefined,
-    });
-    applyDelta(delta, rec.id);
+      createdAt: Date.now(),
+      srcHash: leafHash(chat[aiFloor].mes),
+      v: 1,
+    };
+    chat[aiFloor].extra = { ...(chat[aiFloor].extra ?? {}), bbs_leaf: leaf };
 
     engineState.lastRunAt = Date.now();
 
-    // 单步补摘要也立刻反映到注入(隐藏由 checkAutoSummary 末尾的 applyWindowHide 统一负责)
+    // 立刻反映到派生与注入;落盘走防抖(隐藏由 checkAutoSummary 末尾的 applyWindowHide 统一负责)
+    recomputeDerived();
     refreshInjection();
+    scheduleLeafFlush();
 
     // 摘要积累到阈值则触发总结
     await checkResummary();
@@ -272,70 +377,128 @@ export async function runSummary(aiFloor: number): Promise<void> {
   }
 }
 
-/** 当前已被覆盖的索引集合 */
-function coveredSet(): Set<number> {
-  const s = new Set<number>();
-  for (const sum of memory.summaries) for (const i of sum.coveredIndices) s.add(i);
-  return s;
+/**
+ * 当前已被覆盖的楼层索引集合(几何即时推导,不读存储)。
+ * 一条 AI 楼若有有效叶子 → 它及其前置「尚未被更早 AI 叶子覆盖」的楼(含 user 楼)都算被覆盖。
+ * 即区间 (上一条有效 AI 叶子, 本条有效 AI 叶子] 全覆盖。待摘要 AI 楼不闭合区间。
+ */
+export function coveredSet(chat: STMessage[]): Set<number> {
+  const covered = new Set<number>();
+  let segStart = 0;
+  for (let i = 0; i < chat.length; i++) {
+    if (!isAiFloor(chat[i])) continue;
+    if (leafValid(chat[i])) {
+      for (let k = segStart; k <= i; k++) covered.add(k);
+      segStart = i + 1;
+    }
+    // 待摘要 AI 楼(无有效叶子):段不前进,等它被摘后再覆盖
+  }
+  return covered;
+}
+
+/** 某层级触发压缩所需的阈值:叶子层用 leafBatchThreshold,其余用 resummaryThreshold */
+function thresholdForLevel(level: number): number {
+  return level === 0 ? apiSettings.leafBatchThreshold : apiSettings.resummaryThreshold;
+}
+
+/** 某层级「未被收纳的根节点」,按时间/楼层升序。level0=叶子(扫 chat),level≥1=森林。 */
+function rootsAtLevel(level: number, chat: STMessage[]): { id: string; text: string; createdAt: number }[] {
+  const collected = new Set<string>();
+  for (const s of memory.summaries) for (const c of s.childIds) collected.add(c);
+
+  if (level === 0) {
+    const out: { id: string; text: string; createdAt: number }[] = [];
+    for (let i = 0; i < chat.length; i++) {
+      if (!leafValid(chat[i])) continue;
+      const lf = getLeaf(chat[i]) as LeafExtra;
+      if (collected.has(lf.id)) continue; // 已被某 L1 收纳
+      out.push({ id: lf.id, text: lf.text, createdAt: lf.createdAt }); // 已按楼层序
+    }
+    return out;
+  }
+  return memory.summaries
+    .filter(s => s.level === level && !collected.has(s.id))
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+    .map(s => ({ id: s.id, text: s.text, createdAt: s.createdAt }));
 }
 
 /**
- * 二次总结:当 depth=1 的摘要数量达到阈值时,把它们融合成 depth=2 摘要。
+ * 可逆层级压缩(不删底层)。
+ * 从最低层往上逐层检查:某层「未被收纳的根节点」攒够该层阈值时,
+ * 用 AI 把这批的**叙事文本**融合成一条上层节点,childIds 收纳它们(底层全部保留)。
+ * 一次调用会向上连锁(加叶子→可能生 L1→可能生 L2…),用同一套双阈值递归。
  */
 export async function checkResummary(): Promise<void> {
-  const threshold = apiSettings.resummaryThreshold;
-  if (!threshold || threshold < 2) return;
-
-  const firstLevel = memory.summaries.filter(s => s.depth === 1);
-  if (firstLevel.length < threshold) return;
-
-  const channel = getChannelForTask('resummary');
-  if (!channel) {
-    engineState.lastError = '未指派"总结"副 API 渠道';
-    return;
-  }
-
   const ctx = getContext();
   if (!ctx) return;
+  const chat = ctx.chat ?? [];
 
-  // 取最早的 threshold 条融合
-  const batch = firstLevel.slice(0, threshold);
-  const content = batch.map((s, i) => `[${i + 1}] ${s.text}`).join('\n\n');
-  const prompt = buildResummaryPrompt({ user: ctx.name1, char: ctx.name2, content });
+  // 最高现存压缩层级,作为连锁上限(+1 容纳新生成的层)
+  const maxLevel = memory.summaries.reduce((m, s) => Math.max(m, s.level), 0);
 
-  try {
-    const raw = await requestCompletion(channel, [{ role: 'user', content: prompt }]);
-    const delta = extractJsonObject<{ summary?: string }>(raw);
-    if (!delta?.summary) throw new Error('二次总结解析失败');
+  for (let level = 0; level <= maxLevel + 1; level++) {
+    const threshold = thresholdForLevel(level);
+    if (!threshold || threshold < 2) continue;
 
-    const mergedIndices = batch.flatMap(s => s.coveredIndices);
-    const mergedIds = batch.map(s => s.id);
+    const roots = rootsAtLevel(level, chat);
+    if (roots.length < threshold) continue;
 
-    // 移除被合并的一层摘要,加入二层摘要
-    memory.summaries = memory.summaries.filter(s => !mergedIds.includes(s.id));
-    addSummary({
-      text: delta.summary.trim(),
-      coveredIndices: mergedIndices,
-      depth: 2,
-      auto: true,
-      mergedFrom: mergedIds,
-    });
-    saveMemory();
-    refreshInjection();
-  } catch (e) {
-    engineState.lastError = e instanceof Error ? e.message : String(e);
+    const channel = getChannelForTask('resummary');
+    if (!channel) {
+      engineState.lastError = '未指派"总结"副 API 渠道';
+      return;
+    }
+
+    const batch = roots.slice(0, threshold);
+    const content = batch.map((s, i) => `[${i + 1}] ${s.text}`).join('\n\n');
+    const prompt = buildResummaryPrompt({ user: ctx.name1, char: ctx.name2, content });
+
+    try {
+      const raw = await requestCompletion(channel, [{ role: 'user', content: prompt }]);
+      const delta = extractJsonObject<{ summary?: string }>(raw);
+      if (!delta?.summary) throw new Error('总结解析失败');
+
+      // 生成上层节点收纳这批(**不删 batch**),时间戳取批内最新,排在它们之后
+      const newCreatedAt = Math.max(...batch.map(s => s.createdAt)) + 1;
+      addSummary({
+        text: delta.summary.trim(),
+        level: level + 1,
+        childIds: batch.map(s => s.id),
+        auto: true,
+        createdAt: newCreatedAt,
+      });
+      refreshInjection();
+      // 不 break:继续外层 for,上一层可能也攒够了 → 连锁压更高层
+    } catch (e) {
+      engineState.lastError = e instanceof Error ? e.message : String(e);
+      return; // 本层失败则停止连锁,下次再试
+    }
   }
 }
 
 /**
- * 绑定事件。checkAutoSummary 幂等(遍历所有未覆盖楼层,已摘要的跳过)+ busy 锁,
- * 多个事件触发同一次检查安全,重复只会早退,不会重复发请求。所有摘要触发都用
- * fire-and-forget(不 await),避免阻塞 ST 的 emit(emit 会 await 监听器)。
- *  - USER_MESSAGE_RENDERED:用户发消息(主生成之前)→ 与主生成并行。
- *  - GENERATION_STARTED:任意生成开始时(主生成之前)→ 让重新生成/翻页也能并行。
- *    过滤 dryRun / quiet / impersonate(非真实 AI 回复)。
- *  - CHAT_CHANGED:切聊天后记忆已重载,刷新注入。
- * 摘要走独立 fetch、不经 ST 的 Generate,不会触发 GENERATION_STARTED 自循环。
+ * 响应 chat 结构变动(翻页/删除/编辑):数据已随消息自动跟随,只需清坏链、重算派生、刷新,
+ * 不做任何索引手术、**不触发摘要生成**(生成由 maybeSummarizePrevAi 按规则单独决定)。
+ * debounce 合并快速连翻。
+ */
+let reactTimer: ReturnType<typeof setTimeout> | null = null;
+function reactToChatMutation(): void {
+  if (reactTimer) clearTimeout(reactTimer);
+  reactTimer = setTimeout(() => {
+    reactTimer = null;
+    pruneBrokenComps(); // 叶子失效 → 删包含它的整条祖先压缩链
+    recomputeDerived(); // 删叶/陈旧 → 物品/计划回退;UI(derivedMeta)更新
+    refreshInjection(); // 不再注入陈旧/已删叶子
+  }, 200);
+}
+
+/**
+ * 绑定事件。摘要触发规则:**只确保「上一条已定稿 AI 消息」有摘要**(单楼增量,非全量)。
+ * 进入聊天 / 翻到没摘要的页,都不再自动立刻补摘。
+ *  - USER_MESSAGE_RENDERED:发新消息 → 摘「上一条 AI」(skipLastAi=false)。
+ *  - GENERATION_STARTED(regenerate/swipe):末尾 AI 正在被改写,跳过它 → 摘「之前那条 AI」(skipLastAi=true)。
+ *  - MESSAGE_SWIPED / MESSAGE_EDITED / MESSAGE_DELETED:数据随消息跟随 → reactToChatMutation(清坏链+重算+刷新),不在此处生成。
+ *  - CHAT_CHANGED:store 负责重载,这里刷新注入。
  */
 export function bindEngine(): void {
   const ctx = getContext();
@@ -345,22 +508,26 @@ export function bindEngine(): void {
 
   console.log('[柏宝书] bindEngine 执行,监听', et.USER_MESSAGE_RENDERED, et.GENERATION_STARTED);
 
-  // 主路径:用户发消息瞬间(主生成尚未开始)并行摘要
+  // 发新消息:此刻末尾 AI 是「上一条已定稿」的回复,摘它。
   es.on(et.USER_MESSAGE_RENDERED, () => {
-    console.log('[柏宝书] USER_MESSAGE_RENDERED 触发(并行)');
-    void checkAutoSummary();
+    console.log('[柏宝书] USER_MESSAGE_RENDERED → 摘上一条 AI');
+    void maybeSummarizePrevAi(false);
   });
 
-  // 覆盖重新生成 / 翻页:它们没有 user message,但都在生成开始时 emit GENERATION_STARTED。
-  // 此刻新回复还没写进 chat,正好趁机并行摘「上一楼」。
+  // 重新生成 / 翻页:GENERATION_STARTED 时末尾 AI 即将被改写(易变),跳过它,摘之前那条 AI。
   if (et.GENERATION_STARTED) {
     es.on(et.GENERATION_STARTED, (type?: string, _opts?: unknown, dryRun?: boolean) => {
       if (dryRun) return;
-      if (type === 'quiet' || type === 'impersonate') return; // 静默/替用户生成,非真实 AI 回复
-      console.log('[柏宝书] GENERATION_STARTED 触发(并行), type =', type);
-      void checkAutoSummary();
+      if (type === 'quiet' || type === 'impersonate' || type === 'continue') return; // 非真实新回复
+      console.log('[柏宝书] GENERATION_STARTED → 摘上上条 AI, type =', type);
+      void maybeSummarizePrevAi(true);
     });
   }
+
+  // 以下三事件只让数据/UI 跟随,不主动生成摘要。
+  if (et.MESSAGE_SWIPED) es.on(et.MESSAGE_SWIPED, () => reactToChatMutation());
+  if (et.MESSAGE_EDITED) es.on(et.MESSAGE_EDITED, () => reactToChatMutation());
+  if (et.MESSAGE_DELETED) es.on(et.MESSAGE_DELETED, () => reactToChatMutation());
 
   if (et.CHAT_CHANGED) {
     es.on(et.CHAT_CHANGED, () => {

@@ -1,25 +1,26 @@
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue';
-import { memory, saveMemory } from '@/memory/store';
-import { ref } from 'vue';
+import { appendOpToLatestLeaf } from '@/memory/apply';
+import { derivedMeta, memory } from '@/memory/store';
+import { computed, ref } from 'vue';
 
 const newName = ref('');
+
+// 物品/计划是从叶子摘要重放出来的派生数据,手动操作写入「最新一条有效叶子」。
+// 没有任何有效叶子时无处挂载,禁止手动添加。
+const hasLeaf = computed(() => derivedMeta.hasLeaf);
 
 function addItem() {
   const name = newName.value.trim();
   if (!name) return;
-  const t = Date.now();
-  memory.items.push({ id: `item_${t}_${memory.items.length}`, name, createdAt: t, updatedAt: t });
-  saveMemory();
+  if (!appendOpToLatestLeaf({ items: { add: [{ name }] } })) return;
   newName.value = '';
 }
 
 function removeItem(id: string) {
-  const idx = memory.items.findIndex(i => i.id === id);
-  if (idx >= 0) {
-    memory.items.splice(idx, 1);
-    saveMemory();
-  }
+  const it = memory.items.find(i => i.id === id);
+  if (!it) return;
+  appendOpToLatestLeaf({ items: { remove: [it.name] } });
 }
 </script>
 
@@ -32,10 +33,11 @@ function removeItem(id: string) {
         v-model="newName"
         class="bbs-input"
         type="text"
-        placeholder="手动添加物品…"
+        :placeholder="hasLeaf ? '手动添加物品…' : '需先有摘要才能手动添加'"
+        :disabled="!hasLeaf"
         @keydown.enter="addItem"
       />
-      <button class="bbs-btn bbs-btn-primary" type="button" @click="addItem">添加</button>
+      <button class="bbs-btn bbs-btn-primary" type="button" :disabled="!hasLeaf" @click="addItem">添加</button>
     </div>
 
     <hr class="bbs-rule" />
@@ -121,7 +123,7 @@ function removeItem(id: string) {
 }
 .bbs-item-del:hover {
   background: var(--bbs-surface-2);
-  color: #d9534f;
+  color: var(--bbs-danger);
 }
 .bbs-empty {
   flex: 1;

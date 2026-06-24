@@ -2,7 +2,27 @@ import { reactive, watch } from 'vue';
 
 /** 导航位置:auto = PC 顶部、移动端底部 */
 export type NavPosition = 'top' | 'bottom' | 'auto';
-export type ThemeName = 'day' | 'night';
+
+/**
+ * 主题。新增主题只需:
+ *   1) theme.css 里加一套 .bbs-root[data-theme='xxx'] 变量;
+ *   2) 这里给 ThemeName 加上 'xxx',并往 THEMES 注册表加一条。
+ * 设置页与题首切换按钮都从 THEMES 自动读取,无需再改别处。
+ */
+export type ThemeName = 'day' | 'night' | 'pastel';
+
+export interface ThemeDef {
+  value: ThemeName;
+  label: string;
+  /** Icon 组件名,见 components/Icon.vue */
+  icon: string;
+}
+
+export const THEMES: ThemeDef[] = [
+  { value: 'day', label: '日间', icon: 'sun' },
+  { value: 'night', label: '夜间', icon: 'moon' },
+  { value: 'pastel', label: '粉彩梦幻乐园', icon: 'sparkles' },
+];
 
 interface UiState {
   open: boolean;
@@ -25,10 +45,13 @@ function load(): Partial<UiState> {
 
 const saved = load();
 
+// 存的主题可能来自旧版本或被手改坏,校验后再用,否则回落日间
+const savedTheme = THEMES.some(t => t.value === saved.theme) ? (saved.theme as ThemeName) : 'day';
+
 export const ui = reactive<UiState>({
   open: false,
   activePage: saved.activePage ?? 'summary',
-  theme: saved.theme ?? 'day',
+  theme: savedTheme,
   navPosition: saved.navPosition ?? 'auto',
 });
 
@@ -67,6 +90,8 @@ export function closeBook() {
   ui.open = false;
 }
 
-export function toggleTheme() {
-  ui.theme = ui.theme === 'day' ? 'night' : 'day';
+/** 题首按钮:在所有已注册主题间循环切换 */
+export function cycleTheme() {
+  const i = THEMES.findIndex(t => t.value === ui.theme);
+  ui.theme = THEMES[(i + 1) % THEMES.length].value;
 }
