@@ -26,7 +26,7 @@ function removeItem(id: string) {
 
 <template>
   <section class="bbs-page">
-    <h2 class="bbs-title">物品</h2>
+    <h2 class="bbs-title bbs-title-sub">物品</h2>
 
     <div class="bbs-additem">
       <input

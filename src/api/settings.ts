@@ -26,7 +26,19 @@ export interface ApiChannel {
 
 export type TaskType = 'summary' | 'resummary';
 
+/** 自定义提示词:空串表示沿用 prompts.ts 内置模板,非空则整体覆盖该任务的模板。 */
+export interface CustomPrompts {
+  summary: string;
+  resummary: string;
+  /** 破限提示词:附加在摘要/总结请求里;空串=不附加。 */
+  jailbreak: string;
+}
+
 export interface ApiSettings {
+  /** 插件总开关。关闭后停止一切自动注入/摘要/总结/隐藏;ST 菜单入口仍在,可重新打开界面再开启。 */
+  enabled: boolean;
+  /** 自定义提示词模板(空=用内置) */
+  prompts: CustomPrompts;
   channels: ApiChannel[];
   /** 各任务指派的渠道 id */
   assignments: Record<TaskType, string>;
@@ -48,6 +60,8 @@ const LEGACY_STORAGE_KEY = 'bbs.api.v1';
 
 function defaults(): ApiSettings {
   return {
+    enabled: true,
+    prompts: { summary: '', resummary: '', jailbreak: '' },
     channels: [],
     assignments: { summary: '', resummary: '' },
     autoSummaryEnabled: false,
@@ -61,7 +75,11 @@ function defaults(): ApiSettings {
 /** 把任意来源的原始对象并入默认值,容错缺字段/类型不符。 */
 function normalize(raw: unknown): ApiSettings {
   if (!raw || typeof raw !== 'object') return defaults();
-  return { ...defaults(), ...(raw as Partial<ApiSettings>) };
+  const d = defaults();
+  const merged = { ...d, ...(raw as Partial<ApiSettings>) };
+  // prompts 是嵌套对象,展开合并不会补全缺字段,单独兜底(老数据没有 prompts 键时回退默认)
+  merged.prompts = { ...d.prompts, ...((raw as Partial<ApiSettings>).prompts ?? {}) };
+  return merged;
 }
 
 // import 阶段 ST 往往尚未就绪,先以默认值建 reactive;真实值由 hydrateSettings 灌入。
@@ -71,6 +89,8 @@ export const apiSettings = reactive<ApiSettings>(defaults());
 let ready = false;
 
 function applyInto(target: ApiSettings, src: ApiSettings): void {
+  target.enabled = src.enabled;
+  target.prompts = src.prompts;
   target.channels = src.channels;
   target.assignments = src.assignments;
   target.autoSummaryEnabled = src.autoSummaryEnabled;

@@ -1,21 +1,30 @@
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue';
 import { appendOpToLatestLeaf, deleteLeafAt, deleteSummary, editLeafAt, editSummary } from '@/memory/apply';
-import { checkAutoSummary, engineState } from '@/memory/engine';
+import { engineState, summarizeFloor } from '@/memory/engine';
 import { refreshInjection } from '@/memory/inject';
-import { derivedMeta, memory } from '@/memory/store';
-import { computed, nextTick, ref } from 'vue';
+import { derivedMeta, memory, recomputeDerived } from '@/memory/store';
+import { computed, nextTick, onMounted, ref } from 'vue';
 
-/* ============ 计划 / 悬念(顶部)============ */
+// 打开摘要页时强制重算一次派生:未摘要楼层等派生缓存只在特定事件刷新,
+// 边聊边攒的新 AI 楼可能没触发刷新,进页先对齐一次,避免列表漏楼。
+onMounted(() => recomputeDerived());
+
+/* ============ 悬念簿(顶部)============ */
 const newKind = ref<'plan' | 'suspense'>('plan');
 const newContent = ref('');
-// 移动端:手动添加是低频操作,默认收起成一条触发按钮,点击才展开输入区(省空间)。
-// PC 端不受此状态影响——触发按钮在宽屏恒隐藏,输入区恒显示(见样式媒体查询)。
+// 手动添加是低频操作:用弹窗承载,平时只露一个小「+」按钮,不占版面。
 const composerOpen = ref(false);
-const contentInput = ref<HTMLInputElement | null>(null);
+const contentInput = ref<HTMLTextAreaElement | null>(null);
 function openComposer() {
+  if (!hasLeaf.value) return;
+  newKind.value = 'plan';
+  newContent.value = '';
   composerOpen.value = true;
   void nextTick(() => contentInput.value?.focus());
+}
+function closeComposer() {
+  composerOpen.value = false;
 }
 // 计划/悬念只展示「进行中」。点删除即移除——不再有「了结/已了结」概念。
 const openPlans = computed(() => memory.plans.filter(p => p.status === 'open'));
@@ -38,9 +47,24 @@ function addPlan() {
   if (!content) return;
   if (!appendOpToLatestLeaf({ plans: { add: [{ kind: newKind.value, content }] } })) return;
   newContent.value = '';
+  composerOpen.value = false;
 }
 function removePlan(id: string) {
   appendOpToLatestLeaf({ plans: { remove: [id] } });
+}
+
+/* ============ 未摘要楼层 ============
+ * derivedMeta.pendingFloors = AI 楼且无有效叶子,由旧到新;此处倒序展示(新楼在前)。 */
+const pendingFloors = computed(() => [...derivedMeta.pendingFloors].sort((a, b) => b - a));
+const summarizingFloor = ref<number | null>(null);
+async function summarizeOne(floor: number) {
+  if (engineState.running || summarizingFloor.value !== null) return;
+  summarizingFloor.value = floor;
+  try {
+    await summarizeFloor(floor);
+  } finally {
+    summarizingFloor.value = null;
+  }
 }
 
 /* ============ 摘要列表(下方)============ */
@@ -178,38 +202,18 @@ function saveEdit() {
 
 <template>
   <section class="bbs-page">
-    <!-- ===== 计划 / 悬念 ===== -->
+    <!-- ===== 悬念簿 ===== -->
     <div class="bbs-section-head">
-      <h2 class="bbs-title">计划 · 悬念</h2>
-    </div>
-
-    <!-- 移动端收起态:仅一条触发按钮(宽屏恒隐藏) -->
-    <button
-      v-if="!composerOpen"
-      class="bbs-addplan-trigger"
-      type="button"
-      :disabled="!hasLeaf"
-      @click="openComposer"
-    >
-      <Icon name="plans" />
-      <span>{{ hasLeaf ? '添加计划 / 悬念' : '需先有摘要才能手动添加' }}</span>
-    </button>
-
-    <div class="bbs-addplan" :class="{ 'is-open': composerOpen }">
-      <div class="bbs-kind-toggle">
-        <button type="button" class="bbs-kind" :class="{ 'is-on': newKind === 'plan' }" @click="newKind = 'plan'">计划</button>
-        <button type="button" class="bbs-kind" :class="{ 'is-on': newKind === 'suspense' }" @click="newKind = 'suspense'">悬念</button>
-      </div>
-      <input
-        ref="contentInput"
-        v-model="newContent"
-        class="bbs-input"
-        type="text"
-        :placeholder="hasLeaf ? '手动添加…' : '需先有摘要才能手动添加'"
+      <h2 class="bbs-title bbs-title-sub">悬念簿</h2>
+      <button
+        class="bbs-add-mini"
+        type="button"
         :disabled="!hasLeaf"
-        @keydown.enter="addPlan"
-      />
-      <button class="bbs-btn bbs-btn-primary" type="button" :disabled="!hasLeaf" @click="addPlan">添加</button>
+        :title="hasLeaf ? '手动添加计划 / 悬念' : '需先有摘要才能手动添加'"
+        @click="openComposer"
+      >
+        <Icon name="plus" />
+      </button>
     </div>
 
     <div v-if="openPlans.length" class="bbs-plan-group">
@@ -231,11 +235,28 @@ function saveEdit() {
 
     <!-- ===== 摘要 ===== -->
     <div class="bbs-section-head">
-      <h2 class="bbs-title">摘要</h2>
-      <button class="bbs-btn" type="button" :disabled="engineState.running" @click="checkAutoSummary">
-        <Icon name="summary" />
-        {{ engineState.running ? '生成中…' : '立即摘要' }}
-      </button>
+      <h2 class="bbs-title bbs-title-sub">摘要</h2>
+    </div>
+
+    <!-- 未摘要楼层:只列楼层号,点一下单独补摘那一楼 -->
+    <div v-if="pendingFloors.length" class="bbs-pending">
+      <span class="bbs-pending-label" :data-count="pendingFloors.length">
+        <Icon name="summary" />未摘要楼层
+      </span>
+      <div class="bbs-pending-chips">
+        <button
+          v-for="f in pendingFloors"
+          :key="f"
+          class="bbs-pending-chip"
+          type="button"
+          :disabled="engineState.running || summarizingFloor !== null"
+          :title="`对楼层 #${f} 生成摘要`"
+          @click="summarizeOne(f)"
+        >
+          <span v-if="summarizingFloor === f" class="bbs-pending-spin"></span>
+          <template v-else>#{{ f }}</template>
+        </button>
+      </div>
     </div>
 
     <!-- 当前状态 -->
@@ -296,7 +317,39 @@ function saveEdit() {
     </div>
     <div v-else class="bbs-empty">
       <span class="bbs-empty-icon"><Icon name="summary" /></span>
-      <p>还没有摘要。对话累积到设定楼层后会自动生成,也可点「立即摘要」。</p>
+      <p>还没有摘要。对话累积到设定楼层后会自动生成,也可在「未摘要楼层」里点楼层号单独补摘。</p>
+    </div>
+
+    <!-- ===== 添加计划 / 悬念弹窗 ===== -->
+    <div v-if="composerOpen" class="bbs-modal-mask" @click.self="closeComposer">
+      <div class="bbs-modal" role="dialog" aria-modal="true" aria-label="添加计划或悬念">
+        <header class="bbs-modal-head">
+          <span class="bbs-modal-title">添加计划 / 悬念</span>
+          <button class="bbs-summary-act" type="button" title="关闭" @click="closeComposer"><Icon name="close" /></button>
+        </header>
+        <div class="bbs-modal-field">
+          <span class="bbs-modal-label">类型</span>
+          <div class="bbs-kind-toggle">
+            <button type="button" class="bbs-kind" :class="{ 'is-on': newKind === 'plan' }" @click="newKind = 'plan'">计划</button>
+            <button type="button" class="bbs-kind" :class="{ 'is-on': newKind === 'suspense' }" @click="newKind = 'suspense'">悬念</button>
+          </div>
+        </div>
+        <label class="bbs-modal-field">
+          <span class="bbs-modal-label">内容</span>
+          <textarea
+            ref="contentInput"
+            v-model="newContent"
+            class="bbs-input bbs-modal-textarea"
+            rows="3"
+            placeholder="描述这条计划或悬念…"
+            @keydown.enter.exact.prevent="addPlan"
+          ></textarea>
+        </label>
+        <footer class="bbs-modal-foot">
+          <button class="bbs-btn" type="button" @click="closeComposer">取消</button>
+          <button class="bbs-btn bbs-btn-primary" type="button" :disabled="!newContent.trim()" @click="addPlan">添加</button>
+        </footer>
+      </div>
     </div>
 
     <!-- ===== 编辑弹窗 ===== -->
@@ -342,34 +395,31 @@ function saveEdit() {
   justify-content: space-between;
   gap: 12px;
 }
-
-/* —— 计划/悬念 —— */
-/* 收起态触发按钮:仅移动端使用(宽屏 display:none),整宽虚线框,低调邀请态 */
-.bbs-addplan-trigger {
-  display: none; /* 宽屏恒隐藏;移动端媒体查询里翻成 flex */
+/* —— 悬念簿 —— */
+/* 标题旁的小「+」:无框、muted,平时低调,hover 才浮现强调色 */
+.bbs-add-mini {
+  flex: 0 0 auto;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  width: 100%;
-  margin-top: 12px;
-  padding: 11px 14px;
-  border: 1px dashed var(--bbs-line-strong);
-  border-radius: var(--bbs-radius);
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--bbs-radius-sm);
   background: transparent;
-  color: var(--bbs-ink-soft);
-  font-family: var(--bbs-font-sans);
-  font-size: 14px;
+  color: var(--bbs-ink-muted);
+  font-size: 15px;
   cursor: pointer;
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  transition: color 0.15s, background 0.15s;
 }
-.bbs-addplan-trigger:disabled {
-  opacity: 0.55;
+.bbs-add-mini:hover:not(:disabled) {
+  color: var(--bbs-accent);
+  background: var(--bbs-surface-2);
+}
+.bbs-add-mini:disabled {
+  opacity: 0.4;
   cursor: default;
-}
-.bbs-addplan {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
 }
 .bbs-kind-toggle {
   display: inline-flex;
@@ -512,6 +562,85 @@ function saveEdit() {
   margin: 12px 0 0;
   font-size: 12px;
   color: var(--bbs-danger);
+}
+
+/* —— 未摘要楼层:待办面板,用强调色描边的卡片框起来,提示「这些楼还没摘」 —— */
+.bbs-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--bbs-accent);
+  border-radius: var(--bbs-radius);
+  background: var(--bbs-accent-soft);
+}
+.bbs-pending-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bbs-accent);
+}
+/* 标签后跟一枚计数小点,强化「有 N 楼待办」 */
+.bbs-pending-label::after {
+  content: attr(data-count);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--bbs-radius-pill);
+  background: var(--bbs-accent);
+  color: var(--bbs-accent-ink);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.bbs-pending-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.bbs-pending-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--bbs-accent);
+  border-radius: var(--bbs-radius-sm);
+  background: var(--bbs-surface);
+  color: var(--bbs-accent);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.bbs-pending-chip:hover:not(:disabled) {
+  color: var(--bbs-accent-ink);
+  background: var(--bbs-accent);
+}
+.bbs-pending-chip:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+/* 生成中:小旋转环替代楼层号 */
+.bbs-pending-spin {
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--bbs-line-strong);
+  border-top-color: var(--bbs-accent);
+  border-radius: 50%;
+  animation: bbs-pending-rot 0.7s linear infinite;
+}
+@keyframes bbs-pending-rot {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* —— 分章分隔:计划/悬念 与 摘要 两区之间的明确界线 —— */
@@ -703,30 +832,14 @@ function saveEdit() {
   }
 }
 
-/* ============ 窄屏:手动添加默认收起、输入区两行堆叠、状态条整齐 ============ */
+/* ============ 窄屏:类型切换撑满、状态条整齐 ============ */
 @media (max-width: 640px) {
-  /* 收起态:显示触发按钮,隐藏输入区;点击展开(.is-open)后反过来 */
-  .bbs-addplan-trigger {
-    display: flex;
-  }
-  .bbs-addplan {
-    display: none;
-  }
-  /* 展开态:整宽分段切换在上,输入框 + 添加在下(两行堆叠) */
-  .bbs-addplan.is-open {
-    display: flex;
-    flex-wrap: wrap;
-  }
+  /* 添加弹窗里的类型切换:计划 | 悬念 各占一半,撑满整行 */
   .bbs-kind-toggle {
-    flex: 1 1 100%;
+    width: 100%;
   }
   .bbs-kind {
-    flex: 1; /* 计划 | 悬念 各占一半,撑满整行 */
-  }
-  /* flex-basis 0:输入框不按 width:100% 占满整行,与「添加」共处第二行 */
-  .bbs-input {
-    flex: 1 1 0;
-    min-width: 0;
+    flex: 1;
   }
 
   /* 时间/地点:窄屏整齐堆叠成两行,长地点不再把行挤乱 */

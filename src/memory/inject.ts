@@ -10,6 +10,7 @@
  * 主模型因此仍能感知被隐藏的剧情。历史摘要放在聊天顶部附近,当前状态贴近最近对话。
  */
 
+import { apiSettings } from '@/api/settings';
 import type { STMessage } from '@/st/context';
 import { getContext } from '@/st/context';
 import { getLeaf, leafValid } from './apply';
@@ -240,10 +241,13 @@ export function buildInjectionText(): string {
 
 /** 把当前记忆刷新到 ST 的扩展提示槽。ST 未就绪/旧版无此 API 时静默跳过。 */
 export function refreshInjection(): void {
+  // 总开关关闭:不再注入记忆。已注入的旧槽由关闭动作(watch enabled)经 clearInjection 清掉,
+  // 此处仅保证「不再写入新内容」,避免后续聊天事件把记忆又刷回上下文。
+  if (!apiSettings.enabled) return;
   const ctx = getContext();
   const fn = ctx?.setExtensionPrompt;
   if (typeof fn !== 'function') return;
-  const stateDepth = resolveStateInjectionDepth(ctx.chat ?? null);
+  const stateDepth = resolveStateInjectionDepth(ctx?.chat ?? null);
   fn(LEGACY_INJECT_KEY, '', IN_CHAT, STATE_INJECT_DEPTH_BEFORE_LATEST_AI, false, ROLE_SYSTEM, null);
   fn(HISTORY_INJECT_KEY, buildHistoryInjectionText(), IN_CHAT, HISTORY_INJECT_DEPTH, false, ROLE_SYSTEM, null);
   fn(STATE_INJECT_KEY, buildStateInjectionText(), IN_CHAT, stateDepth, false, ROLE_SYSTEM, null);

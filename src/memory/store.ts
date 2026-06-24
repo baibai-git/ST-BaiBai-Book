@@ -1,7 +1,7 @@
 import { getContext, type STMessage } from '@/st/context';
 import { reactive } from 'vue';
 import { deriveMemory, getLeaf, leafHash, leafValid } from './apply';
-import { isAiFloor } from './engine';
+import { isAiFloor, pendingAiFloors } from './engine';
 import type { BaibaiMemory, LeafExtra, MemSummary, StoredDelta } from './types';
 import { createEmptyMemory, MEMORY_KEY, MEMORY_VERSION } from './types';
 
@@ -26,9 +26,10 @@ export interface LeafView {
   active: boolean; // 所在消息已隐藏(is_system)
   stale: boolean; // 正文已变、尚未重摘
 }
-export const derivedMeta = reactive<{ hasLeaf: boolean; leaves: LeafView[] }>({
+export const derivedMeta = reactive<{ hasLeaf: boolean; leaves: LeafView[]; pendingFloors: number[] }>({
   hasLeaf: false,
   leaves: [],
+  pendingFloors: [],
 });
 
 /** 重放 chat 得到 state/items/plans,原地写回;并刷新 derivedMeta */
@@ -61,6 +62,8 @@ export function recomputeDerived(): void {
   }
   derivedMeta.leaves = leaves;
   derivedMeta.hasLeaf = leaves.some(l => !l.stale);
+  // 待摘要楼层(AI 楼且无有效叶子),供摘要页「未摘要楼层」列表逐楼补摘
+  derivedMeta.pendingFloors = chat ? pendingAiFloors(chat) : [];
 }
 
 /* ============ 落盘:叶子在 chat 文件,森林在 metadata ============ */

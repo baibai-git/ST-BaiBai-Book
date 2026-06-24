@@ -5,13 +5,13 @@ import type { STMessage } from '@/st/context';
 import { getContext } from '@/st/context';
 import { addSummary, deriveMemory, finalizeDelta, getLeaf, leafHash, leafValid, makeLeafId, pruneBrokenComps, stripHtml } from './apply';
 import { extractJsonObject } from './json';
-import { refreshInjection, renderHistoryNodes, selectHistoryNodesBefore } from './inject';
+import { clearInjection, refreshInjection, renderHistoryNodes, selectHistoryNodesBefore } from './inject';
 import { buildResummaryPrompt, buildSummaryPrompt, buildWorldInfoSystem, THINKING_CHECKLIST, THINKING_PREFILL } from './prompts';
 import { memory, recomputeDerived, scheduleLeafFlush } from './store';
 import type { LeafExtra, SummaryDelta } from './types';
 
 /** 引擎运行状态(供 UI 显示) */
-import { reactive } from 'vue';
+import { reactive, watch } from 'vue';
 export const engineState = reactive({
   running: false,
   lastError: '' as string,
@@ -92,18 +92,21 @@ async function fetchWorldInfo(chat: STMessage[], targets: number[], name1: strin
 }
 
 /**
- * 是否「可追踪的 AI 楼层」。对齐 Horae 的 _isTrackableAiMessage,并与「是否对主 LLM 可见」解耦:
- * 隐藏旧楼用 is_system=true,但被我们隐藏的旧 AI 楼(打了 extra.bbs_hidden)仍要算作 AI 楼,
- * 否则 keepStart / 覆盖统计会被破坏。三态:
- *   ① 可见 AI 楼:!is_user && !is_system
- *   ② 我们隐藏的旧 AI 楼:is_system && extra.bbs_hidden  → 仍算 AI 楼
- *   ③ ST 原生系统楼(欢迎语/sys 等):is_system && !bbs_hidden → 不算
+ * 是否「可追踪的 AI 楼层」。与「是否对主 LLM 可见」解耦——隐藏与否都要算,只要它是真实的 AI 回复。
+ *
+ * 关键区分:`is_system=true` 有两种来源,不能一概排除:
+ *   ① 被隐藏的真实 AI 回复(我们 /hide 的 → 带 extra.bbs_hidden;或用户/别的扩展 /hide 的 → 无标记)
+ *      —— 这些是角色的真实发言,**必须算 AI 楼**,否则隐藏过的楼就漏摘(用户实测痛点)。
+ *   ② ST 原生系统楼(/sys、/comment、叙事注入等)—— 这些带 extra.type,**不算**。
+ * 据此:非用户、有正文、且不是「带 type 的原生系统楼」即为 AI 楼。普通可见回复 is_system=false 自然命中。
  */
 export function isAiFloor(m: STMessage | undefined): boolean {
   if (!m || m.is_user) return false;
   if (typeof m.mes !== 'string' || !m.mes.trim()) return false;
   if (m.extra?.bbs_hidden) return true; // 被我们隐藏的旧 AI 楼
-  return !m.is_system; // 其余:非 ST 原生系统楼才算
+  // ST 原生系统楼带 extra.type(narrator/sys 等);真实回复(可见或被 /hide)无 type。
+  if (m.is_system && m.extra?.type) return false;
+  return true;
 }
 
 /**
@@ -152,6 +155,7 @@ async function afterSummaryHideAndInject(chat: STMessage[]): Promise<void> {
  */
 export async function checkAutoSummary(): Promise<void> {
   console.log('[柏宝书] checkAutoSummary(手动全量) 进入', { enabled: apiSettings.autoSummaryEnabled, busy });
+  if (!apiSettings.enabled) { console.log('[柏宝书] 早退:插件总开关关闭'); return; }
   if (!apiSettings.autoSummaryEnabled) { console.log('[柏宝书] 早退:自动摘要未开启'); return; }
   if (busy) { console.log('[柏宝书] 早退:busy 锁'); return; }
 
@@ -169,6 +173,21 @@ export async function checkAutoSummary(): Promise<void> {
 }
 
 /**
+ * 手动对单个楼层补摘(摘要页「未摘要楼层」列表逐楼点击)。
+ * 与自动触发解耦:不看 autoSummaryEnabled,只要总开关开着就执行;摘完跑收尾(隐藏+注入)。
+ */
+export async function summarizeFloor(floor: number): Promise<void> {
+  if (!apiSettings.enabled) return;
+  if (busy) return;
+  const ctx = getContext();
+  if (!ctx) return;
+  const chat = ctx.chat ?? [];
+  if (!isAiFloor(chat[floor]) || leafValid(chat[floor])) return;
+  await runSummary(floor);
+  await afterSummaryHideAndInject(chat);
+}
+
+/**
  * 自动触发的单楼增量摘要:只确保「上一条已定稿 AI 消息」有摘要,且只摘那一条。
  * @param skipLastAi true 时跳过正在操作的末尾 AI 消息(翻页/重新生成场景),取它之前的那条 AI。
  *
@@ -178,6 +197,7 @@ export async function checkAutoSummary(): Promise<void> {
  *    例:#0 开场白、#1 用户、#2 最新 AI,在 #2 翻页 → 跳过 #2 → 目标 #0。
  */
 export async function maybeSummarizePrevAi(skipLastAi: boolean): Promise<void> {
+  if (!apiSettings.enabled) return;
   if (!apiSettings.autoSummaryEnabled) return;
   if (busy) return;
   const ctx = getContext();
@@ -329,6 +349,7 @@ async function syncWindowHiddenState(chat: STMessage[]): Promise<void> {
  */
 export async function runSummary(aiFloor: number): Promise<void> {
   console.log('[柏宝书] runSummary 楼层', aiFloor, '| busy =', busy);
+  if (!apiSettings.enabled) { console.log('[柏宝书] runSummary 早退:插件总开关关闭'); return; }
   if (busy) { console.log('[柏宝书] runSummary 早退:busy'); return; }
   const channel = getChannelForTask('summary');
   if (!channel) {
@@ -378,8 +399,10 @@ export async function runSummary(aiFloor: number): Promise<void> {
       content,
     });
 
-    // 组装:世界设定(独立 system,有才加)→ 主提示 → 思考清单(system)→ assistant 预填 <thinking>
+    // 组装:破限(有才加,置顶)→ 世界设定(独立 system,有才加)→ 主提示 → 思考清单 → assistant 预填
     const messages: ChatMsg[] = [];
+    const jb = apiSettings.prompts.jailbreak.trim();
+    if (jb) messages.push({ role: 'system', content: jb });
     if (worldInfo) messages.push({ role: 'system', content: buildWorldInfoSystem(worldInfo) });
     messages.push(
       { role: 'user', content: prompt },
@@ -474,6 +497,7 @@ function rootsAtLevel(level: number, chat: STMessage[]): { id: string; text: str
  * 一次调用会向上连锁(加叶子→可能生 L1→可能生 L2…),用同一套双阈值递归。
  */
 export async function checkResummary(): Promise<void> {
+  if (!apiSettings.enabled) return;
   const ctx = getContext();
   if (!ctx) return;
   const chat = ctx.chat ?? [];
@@ -499,7 +523,11 @@ export async function checkResummary(): Promise<void> {
     const prompt = buildResummaryPrompt({ user: ctx.name1, char: ctx.name2, content });
 
     try {
-      const raw = await requestCompletion(channel, [{ role: 'user', content: prompt }]);
+      const jb = apiSettings.prompts.jailbreak.trim();
+      const messages: ChatMsg[] = [];
+      if (jb) messages.push({ role: 'system', content: jb });
+      messages.push({ role: 'user', content: prompt });
+      const raw = await requestCompletion(channel, messages);
       const delta = extractJsonObject<{ summary?: string }>(raw);
       if (!delta?.summary) throw new Error('总结解析失败');
 
@@ -533,7 +561,7 @@ function reactToChatMutation(syncHidden = false): void {
     reactTimer = null;
     pruneBrokenComps(); // 叶子失效 → 删包含它的整条祖先压缩链
     recomputeDerived(); // 删叶/陈旧 → 物品/计划回退;UI(derivedMeta)更新
-    if (syncHidden && apiSettings.autoHide) {
+    if (syncHidden && apiSettings.enabled && apiSettings.autoHide) {
       void syncWindowHiddenState(getContext()?.chat ?? [])
         .catch(e => {
           engineState.lastError = e instanceof Error ? e.message : String(e);
@@ -583,10 +611,21 @@ export function bindEngine(): void {
   if (et.MESSAGE_EDITED) es.on(et.MESSAGE_EDITED, () => reactToChatMutation());
   if (et.MESSAGE_DELETED) es.on(et.MESSAGE_DELETED, () => reactToChatMutation(true));
 
+  // AI 新回复落定:不一定会触发摘要(自动摘要关闭 / 它不是「上一条 AI」),
+  // 但「未摘要楼层」列表必须跟上新增的 AI 楼,故无条件重算一次派生缓存(不发请求)。
+  if (et.CHARACTER_MESSAGE_RENDERED) es.on(et.CHARACTER_MESSAGE_RENDERED, () => recomputeDerived());
+
   if (et.CHAT_CHANGED) {
     es.on(et.CHAT_CHANGED, () => {
       // 记忆重载由 store 的 CHAT_CHANGED 监听负责;此处仅在其后刷新注入
       setTimeout(() => refreshInjection(), 0);
     });
   }
+
+  // 总开关切换:关闭→清掉已注入的记忆槽(不动已隐藏楼层与已存摘要,符合「已有数据不处理」);
+  // 开启→把当前记忆重新注入回上下文。仅响应切换,不在首帧触发。
+  watch(
+    () => apiSettings.enabled,
+    on => (on ? refreshInjection() : clearInjection()),
+  );
 }

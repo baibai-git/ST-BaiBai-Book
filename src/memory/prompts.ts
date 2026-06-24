@@ -14,6 +14,33 @@
  *         {{items_block}} {{plans_block}} {{content}}
  */
 
+import { apiSettings } from '@/api/settings';
+
+/** 一个可用占位符(宏):token 用于插入,desc 给用户看「这里会替换成什么」。 */
+export interface PromptMacro {
+  token: string;
+  desc: string;
+}
+
+/** 摘要提示词可用的宏(供设置页展示 + 点击插入) */
+export const SUMMARY_MACROS: PromptMacro[] = [
+  { token: '{{user}}', desc: '主角名' },
+  { token: '{{char}}', desc: '角色名' },
+  { token: '{{history_block}}', desc: '本轮之前的历史剧情摘要' },
+  { token: '{{state_time}}', desc: '当前已知时间' },
+  { token: '{{state_location}}', desc: '当前已知地点' },
+  { token: '{{items_block}}', desc: '现有物品清单' },
+  { token: '{{plans_block}}', desc: '未了结的计划/悬念' },
+  { token: '{{content}}', desc: '本轮待摘要的对话正文' },
+];
+
+/** 总结(压缩)提示词可用的宏 */
+export const RESUMMARY_MACROS: PromptMacro[] = [
+  { token: '{{user}}', desc: '主角名' },
+  { token: '{{char}}', desc: '角色名' },
+  { token: '{{content}}', desc: '待融合的多条摘要正文' },
+];
+
 export const SUMMARY_PROMPT = `你是严谨的剧情记忆整理员。请阅读下面的【本轮对话】,产出一份结构化记忆更新,并**只输出一个 JSON 对象**。
 核心原则:只提取文本中明确提到的信息,没有的字段不写,禁止编造。
 
@@ -163,9 +190,10 @@ function fill(tpl: string, map: Record<string, string>): string {
   return tpl.replace(/\{\{(\w+)\}\}/g, (_, k) => map[k] ?? '');
 }
 
-/** 构造楼层摘要提示词 */
+/** 构造楼层摘要提示词。用户在设置里填了自定义模板就用它,否则回退内置 SUMMARY_PROMPT。 */
 export function buildSummaryPrompt(a: BuildArgs): string {
-  return fill(SUMMARY_PROMPT, {
+  const tpl = apiSettings.prompts.summary.trim() || SUMMARY_PROMPT;
+  return fill(tpl, {
     user: a.user || '主角',
     char: a.char || '角色',
     history_block: a.history.trim() || '(无,这是开篇)',
@@ -177,9 +205,10 @@ export function buildSummaryPrompt(a: BuildArgs): string {
   });
 }
 
-/** 构造二次总结提示词 */
+/** 构造二次总结提示词。优先用自定义模板,空则回退内置 RESUMMARY_PROMPT。 */
 export function buildResummaryPrompt(a: Pick<BuildArgs, 'user' | 'char' | 'content'>): string {
-  return fill(RESUMMARY_PROMPT, {
+  const tpl = apiSettings.prompts.resummary.trim() || RESUMMARY_PROMPT;
+  return fill(tpl, {
     user: a.user || '主角',
     char: a.char || '角色',
     content: a.content,

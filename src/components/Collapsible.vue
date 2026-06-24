@@ -90,4 +90,11 @@ const expanded = ref(props.open);
   padding: 14px 16px;
   border-top: 1px solid var(--bbs-line);
 }
+
+/* 移动端:折叠区标题略小一号,与窄屏整体节奏更协调 */
+@media (max-width: 640px) {
+  .bbs-collapsible-head {
+    font-size: 13px;
+  }
+}
 </style>

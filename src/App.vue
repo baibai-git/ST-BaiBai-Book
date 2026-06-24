@@ -93,8 +93,10 @@ const windowStyle = computed(() => {
         @keydown.esc="closeBook"
         tabindex="-1"
       >
+        <!-- v-if 同样绑 ui.open:否则关闭时窗口随父级遮罩一起被移除,自身的 leave 过渡不触发,
+             只剩遮罩淡出 → 看着像「淡出」。绑上后关闭会跑 rise-leave(移动端缩回底部)。 -->
         <Transition name="bbs-rise" appear>
-          <div class="bbs-window" :style="windowStyle" role="dialog" aria-modal="true" aria-label="柏宝书">
+          <div v-if="ui.open" class="bbs-window" :style="windowStyle" role="dialog" aria-modal="true" aria-label="柏宝书">
             <!-- 移动端抓手:可下滑关闭 -->
             <div
               v-if="navPlacement !== 'top' || narrowFlag"

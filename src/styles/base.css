@@ -75,6 +75,15 @@
   letter-spacing: -0.01em;
   margin: 0;
 }
+/* 区块/分页标题:比主标题(22px)小一号,跨页统一(摘要/悬念簿/物品/设置) */
+.bbs-title-sub {
+  font-size: 18px;
+}
+@media (max-width: 640px) {
+  .bbs-title-sub {
+    font-size: 16px;
+  }
+}
 
 /* —— 通用按钮 —— */
 .bbs-btn {
