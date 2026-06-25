@@ -25,15 +25,20 @@ const navOptions: { value: NavPosition; label: string }[] = [
 /* —— 渠道:列表只读展示,编辑/新建都在弹窗里进行,避免一长列表平铺误触。
    两套独立渠道:'api'=副 API(摘要/总结),'vector'=向量记忆。弹窗按 scope 操作对应列表。 —— */
 type ChannelScope = 'api' | 'vector';
+// editingId:正在编辑的「已有渠道」id;新建时为 null。仅用于「完成」时定位写回目标。
 const editingId = ref<string | null>(null);
 const editingScope = ref<ChannelScope>('api');
 // 当前 scope 对应的渠道数组(增删/查找都走它)
 function channelsOf(scope: ChannelScope): ApiChannel[] {
   return scope === 'vector' ? apiSettings.vector.channels : apiSettings.channels;
 }
-const editingChannel = computed(
-  () => channelsOf(editingScope.value).find(c => c.id === editingId.value) ?? null,
-);
+// 编辑用「草稿副本」:v-model 全改在草稿上,只有点「完成」才写回 apiSettings(避免每敲一字就触发存盘)。
+// 弹窗开关也以它为准:草稿存在 = 弹窗打开。
+const editingChannel = ref<ApiChannel | null>(null);
+// 深拷贝渠道(纯数据,JSON 即可),切断与 apiSettings 真身的引用
+function cloneChannel(ch: ApiChannel): ApiChannel {
+  return JSON.parse(JSON.stringify(ch)) as ApiChannel;
+}
 // 密钥默认隐藏;每次打开/关闭弹窗都复位,避免密钥意外保持明文
 const showKey = ref(false);
 
@@ -50,39 +55,42 @@ const excludeParamsText = computed<string>({
   },
 });
 
-// 本次「新建但尚未确认」的渠道 id:取消(×/点外面)时要把它移除,只有点「完成」才真正保留。
-const pendingNewId = ref<string | null>(null);
-
 function addChannel(scope: ChannelScope = 'api') {
-  const ch = newChannel();
-  channelsOf(scope).push(ch);
   showKey.value = false;
   editingScope.value = scope;
-  editingId.value = ch.id; // 新建即进入编辑弹窗
-  pendingNewId.value = ch.id; // 标记为待确认
+  editingId.value = null; // null = 新建,完成时 push
+  editingChannel.value = newChannel(); // 草稿,尚未进 apiSettings
 }
 function openChannel(id: string, scope: ChannelScope = 'api') {
+  const src = channelsOf(scope).find(c => c.id === id);
+  if (!src) return;
   showKey.value = false;
   editingScope.value = scope;
   editingId.value = id;
-  pendingNewId.value = null; // 编辑已有渠道,非新建
+  editingChannel.value = cloneChannel(src); // 编辑草稿副本,不动真身
 }
-/** 取消(× / 点遮罩):新建未确认的渠道直接丢弃;编辑已有渠道则仅关闭(改动是实时的,保持原行为)。 */
+/** 取消(× / 点遮罩):丢弃草稿,不写回 apiSettings(无论新建还是编辑,改动都作废)。 */
 function closeChannel() {
-  if (pendingNewId.value && editingId.value === pendingNewId.value) {
-    const list = channelsOf(editingScope.value);
-    const idx = list.findIndex(c => c.id === pendingNewId.value);
-    if (idx >= 0) list.splice(idx, 1);
-  }
-  pendingNewId.value = null;
   showKey.value = false;
   editingId.value = null;
+  editingChannel.value = null;
 }
-/** 完成:确认保留(清掉待确认标记)后关闭。 */
+/** 完成:把草稿写回 apiSettings —— 新建则 push,编辑则按 id 覆盖。此时才触发存盘。 */
 function confirmChannel() {
-  pendingNewId.value = null;
+  const draft = editingChannel.value;
+  if (draft) {
+    const list = channelsOf(editingScope.value);
+    if (editingId.value) {
+      const idx = list.findIndex(c => c.id === editingId.value);
+      if (idx >= 0) list[idx] = draft;
+      else list.push(draft); // 编辑期间原渠道被删等异常 → 兜底为新增
+    } else {
+      list.push(draft);
+    }
+  }
   showKey.value = false;
   editingId.value = null;
+  editingChannel.value = null;
 }
 // 删除渠道前的二次确认:点删除先开确认弹窗,确认后才真正删。
 const confirmDeleteOpen = ref(false);
@@ -93,9 +101,11 @@ function cancelRemoveChannel() {
   confirmDeleteOpen.value = false;
 }
 function confirmRemoveChannel() {
-  const ch = editingChannel.value;
   confirmDeleteOpen.value = false;
-  if (ch) removeChannel(ch.id);
+  // 删除针对「已有渠道」(editingId);新建草稿尚未入库,等同直接丢弃草稿
+  if (editingId.value) removeChannel(editingId.value);
+  editingId.value = null;
+  editingChannel.value = null;
 }
 function removeChannel(id: string) {
   const scope = editingScope.value;
@@ -111,9 +121,6 @@ function removeChannel(id: string) {
       if (apiSettings.vector[role].channel === id) apiSettings.vector[role].channel = '';
     }
   }
-  // 已显式删除,别再让 closeChannel 二次移除(虽幂等,清掉更清晰)
-  if (pendingNewId.value === id) pendingNewId.value = null;
-  if (editingId.value === id) editingId.value = null;
 }
 
 const testing = ref<Record<string, string>>({});
@@ -600,6 +607,8 @@ function insertMacro(token: string) {
                 @input="modelQuery = editingChannel.model; modelMenuOpen = true"
                 @blur="closeModelMenuSoon"
               />
+              <!-- 自绘下拉三角(纯装饰,pointer-events:none → 点击穿透到输入框照常聚焦展开);仅在有可选模型时显示 -->
+              <span v-if="modelList.length" class="bbs-combo-caret" :class="{ 'is-open': modelMenuOpen }" aria-hidden="true" />
               <ul v-if="modelMenuOpen && modelList.length" class="bbs-combo-menu">
                 <li v-if="!filteredModels.length" class="bbs-combo-empty">无匹配模型</li>
                 <li
@@ -869,6 +878,25 @@ function insertMacro(token: string) {
 }
 .bbs-combo .bbs-input {
   width: 100%;
+  padding-right: 26px; /* 给右侧自绘三角让位,文字不压到箭头 */
+}
+/* 自绘下拉三角:与原生 <select> 同款 SVG,贴右侧居中;展开时翻转。装饰元素不拦点击 */
+.bbs-combo-caret {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  width: 14px;
+  height: 14px;
+  transform: translateY(-50%);
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9.5 12 15.5 18 9.5'/></svg>");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 14px;
+  transition: transform 0.15s ease;
+}
+.bbs-combo-caret.is-open {
+  transform: translateY(-50%) rotate(180deg);
 }
 /* 过滤菜单:绝对定位贴在输入框下方,限高滚动,长列表不撑爆弹窗 */
 .bbs-combo-menu {

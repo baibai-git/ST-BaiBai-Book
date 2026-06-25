@@ -93,10 +93,11 @@ const windowStyle = computed(() => {
         @keydown.esc="closeBook"
         tabindex="-1"
       >
-        <!-- v-if 同样绑 ui.open:否则关闭时窗口随父级遮罩一起被移除,自身的 leave 过渡不触发,
-             只剩遮罩淡出 → 看着像「淡出」。绑上后关闭会跑 rise-leave(移动端缩回底部)。 -->
-        <Transition name="bbs-rise" appear>
-          <div v-if="ui.open" class="bbs-window" :style="windowStyle" role="dialog" aria-modal="true" aria-label="柏宝书">
+        <!-- 窗口常驻于遮罩内(不独立 v-if、不嵌套 Transition):
+             嵌套 Transition 在父子 v-if 同时翻转时,子的 leave 不会触发(实测窗口直接随父被移除,
+             无任何动画)。改由遮罩 Transition 的 class 作后代选择器驱动窗口的进出场动画
+             (见 <style> 里 .bbs-fade-enter-from/.bbs-fade-leave-to 下的 .bbs-window)。 -->
+        <div class="bbs-window" :style="windowStyle" role="dialog" aria-modal="true" aria-label="柏宝书">
             <!-- 移动端抓手:可下滑关闭 -->
             <div
               v-if="navPlacement !== 'top' || narrowFlag"
@@ -131,8 +132,7 @@ const windowStyle = computed(() => {
             </main>
 
             <NavBar v-if="navPlacement === 'bottom'" placement="bottom" />
-          </div>
-        </Transition>
+        </div>
       </div>
     </Transition>
   </div>
@@ -188,7 +188,7 @@ const windowStyle = computed(() => {
   outline-offset: 2px;
 }
 
-/* —— 过渡:遮罩淡入 / 窗口升起 / 换页 —— */
+/* —— 过渡:遮罩淡入淡出,窗口靠遮罩的过渡 class 联动(见下) —— */
 .bbs-fade-enter-active,
 .bbs-fade-leave-active {
   transition: opacity var(--bbs-dur) var(--bbs-ease);
@@ -198,14 +198,11 @@ const windowStyle = computed(() => {
   opacity: 0;
 }
 
-.bbs-rise-enter-active,
-.bbs-rise-leave-active {
-  transition:
-    transform var(--bbs-dur) var(--bbs-ease),
-    opacity var(--bbs-dur) var(--bbs-ease);
-}
-.bbs-rise-enter-from,
-.bbs-rise-leave-to {
+/* 窗口进出场:由遮罩 Transition 的 class 作后代选择器驱动(窗口自身不再套 Transition——
+   父子 v-if 同时翻转时子 Transition 的 leave 不触发,实测窗口会无动画直接被移除)。
+   进出场两端同款 transform → 对称。PC 微升+略放大;移动端在 media query 里改成滑回底部。 */
+.bbs-fade-enter-from .bbs-window,
+.bbs-fade-leave-to .bbs-window {
   opacity: 0;
   transform: translateY(16px) scale(0.985);
 }
@@ -225,9 +222,12 @@ const windowStyle = computed(() => {
   transform: translateY(-6px);
 }
 
-/* —— 窗口拖动时回弹过渡 —— */
+/* 窗口过渡:进出场(transform+opacity)与拖动回弹(transform)共用;
+   拖动跟手时由内联 style 的 transition:none 覆盖,松手回弹再走这条。 */
 .bbs-window {
-  transition: transform var(--bbs-dur) var(--bbs-ease);
+  transition:
+    transform var(--bbs-dur) var(--bbs-ease),
+    opacity var(--bbs-dur) var(--bbs-ease);
 }
 
 /* ============ 移动端:抓手 + 抽屉上滑入场 ============ */
@@ -250,11 +250,17 @@ const windowStyle = computed(() => {
   .bbs-head {
     padding: 4px 16px 12px;
   }
-  /* 抽屉从底部滑入 */
-  .bbs-rise-enter-from,
-  .bbs-rise-leave-to {
+  /* 抽屉从底部滑入 / 滑回底部(纯位移,不淡透明) */
+  .bbs-fade-enter-from .bbs-window,
+  .bbs-fade-leave-to .bbs-window {
     opacity: 1;
     transform: translateY(100%) scale(1);
   }
+  /* 遮罩离场延后淡出:让抽屉先滑回底部,背景殿后再撤,否则窗口随遮罩一起被拉透明,
+     滑动过程看不见(窗口是遮罩子元素,父 opacity 会合成到子)。 */
+  .bbs-fade-leave-active {
+    transition: opacity 0.16s var(--bbs-ease) 0.18s;
+  }
+  /* 窗口滑回底部要走完整 --bbs-dur,不被上面遮罩的短时长牵连(各自 transition 独立,这里仅强调) */
 }
 </style>

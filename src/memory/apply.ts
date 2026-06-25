@@ -306,6 +306,30 @@ export function appendOpToLatestLeaf(op: StoredDelta): boolean {
   return true;
 }
 
+/**
+ * 手动编辑一个物品(派生数据,写回最新叶子的 delta)。
+ *  - 改名:物品 id 按规范化名确定,改名等于换 id → 用 remove(旧名) + add(新名,带 qty/desc) 表达。
+ *  - 仅改 qty/desc:用 update(按原名匹配,设为新值)。
+ * 两种都经 appendOpToLatestLeaf 落到最新叶子。无有效叶子时返回 false。
+ */
+export function editItem(
+  oldName: string,
+  patch: { name?: string; qty?: number; desc?: string },
+): boolean {
+  const newName = patch.name?.trim() || oldName;
+  const desc = patch.desc?.trim() || undefined;
+  const qty = typeof patch.qty === 'number' && Number.isFinite(patch.qty) ? patch.qty : undefined;
+
+  if (norm(newName) !== norm(oldName)) {
+    // 改名:先删旧,再以新名重建(qty 用 add 语义,但旧的已删,等于设为该值)
+    return appendOpToLatestLeaf({
+      items: { remove: [oldName], add: [{ name: newName, qty, desc }] },
+    });
+  }
+  // 同名:更新数量/描述(update 是「设为新值」)
+  return appendOpToLatestLeaf({ items: { update: [{ name: newName, qty, desc }] } });
+}
+
 /** 删除某条消息上的叶子(清 extra),然后级联删坏链 + 重算 + 落盘 */
 export function deleteLeafAt(index: number): boolean {
   const chat = getContext()?.chat;
