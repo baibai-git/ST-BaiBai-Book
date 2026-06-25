@@ -70,7 +70,7 @@ summary 用于记录本回合发生的剧情;除此之外的字段(items、plans
 
 {
   "summary": "本轮剧情摘要,见下方【摘要撰写规则】。",
-  "time": "本轮结束时故事内的当前时间,见下方【时间规则】。",
+{{time_field}}
   "location": "本轮结束时主角所在地点(有变化才写)",
   "items": {
     "add": [{ "name": "物品名", "desc": "简述(可选)", "qty": 数量(可选) }],
@@ -83,10 +83,7 @@ summary 用于记录本回合发生的剧情;除此之外的字段(items、plans
   }
 }
 
-═══ 【时间规则】(time 字段) ═══
-无论正文是否写明时间,time 都【必须】给出一个具体的、数字化的日期和时间,绝对禁止输出"未知""某日""稍晚""不久后""同一天"等任何模糊或非具体表述。
-填法优先级:① 正文明写了时间→直接采用;② 正文没明写→以上方"当前时间"为基准,结合本回合剧情流逝(对话约几分钟、用餐约一小时、过夜则跨到次日等)推算出一个具体时刻;③ 连参考状态都没有时间→自行设定一个合理的具体起始日期时间(如 2026/1/1 12:00)。
-这是为剧情建立时间锚点所必需的,属于基于上下文的合理设定,不算编造;宁可给一个不完美但具体的时间,也绝不能留空或写模糊词。
+{{time_rule}}
 
 ═══ 【物品规则】(items 字段,严格筛选) ═══
 默认不记。只有同时满足下列三条才记,缺一即弃:
@@ -141,6 +138,26 @@ summary 用于记录本回合发生的剧情;除此之外的字段(items、plans
 - summary 是必填,其余字段按需;仅在确有变化时输出对应指令,没有变化就不要包含该数组或字段。
 - 严禁输出 JSON 以外的任何内容(不要解释、不要思维链、不要代码块围栏)。`;
 
+/**
+ * 时间规则有两种形态,由「被分析正文是否带 <bbs_start>/<bbs_end> 时间标签」决定:
+ *  - 有标签:时间由插件从标签直读(权威锚点),AI 不必再算 → 省 time 字段。
+ *  - 无标签(多为开篇/老对话):让 AI 补出 timeStart/timeEnd 两端,作为锚点兜底。
+ * buildSummaryPrompt 据此填充 {{time_field}}(JSON 模板里的字段说明)与 {{time_rule}}(规则段)。
+ */
+export const TIME_FIELD_WITH_TAGS = `  // 时间已由正文标签提供,无需输出 time 字段`;
+export const TIME_RULE_WITH_TAGS = `═══ 【时间规则】 ═══
+本轮正文已带时间标签,故事内时间由系统自动读取,你**无需输出 time / timeStart / timeEnd 字段**,也不要在 summary 之外另算时间。`;
+
+export const TIME_FIELD_NO_TAGS = `  "timeStart": "本段开始时的故事内时间,见下方【时间规则】。",
+  "timeEnd": "本段结束时的故事内时间,见下方【时间规则】。",`;
+export const TIME_RULE_NO_TAGS = `═══ 【时间规则】(timeStart / timeEnd 字段) ═══
+本轮正文没有时间标签,请你给出本段的起始时间(timeStart)与结束时间(timeEnd)两个值,作为剧情的时间锚点。
+- 时间要具体、可明确定位,风格与正文世界观一致:现代题材用数字日期时间(如 1988/9/29 21:30);古风/奇幻题材用相应纪年与时辰(如 庆历四年暮春·辰时三刻)。重点是「能定位到某一刻」,不强求阿拉伯数字。
+- 绝对禁止"未知""某日""稍晚""不久后""同一天"等无法定位到具体时刻的模糊说法。
+- 填法优先级:① 正文明写了时间→直接采用;② 正文没明写→以上方"当前时间"为基准,结合本回合剧情流逝(对话约几分钟、用餐约一小时、过夜跨到次日等)推算;③ 连参考状态都没时间→自行设定一个符合世界观的合理起点。
+- 这是为剧情建立时间锚点所必需,属于基于上下文的合理设定,不算编造;宁可给一个不完美但具体的时间,也绝不能留空或写模糊词。
+- 若本段时间没有推进(起止相同),timeStart 与 timeEnd 写同一个值即可。`;
+
 export const RESUMMARY_PROMPT = `你是剧情压缩助手。下面是若干段按时间先后排列的剧情摘要,请把它们压缩为一段信息密度极高、连贯的上层摘要,**只输出一个 JSON 对象**。
 
 【主角】{{user}}  【角色】{{char}}
@@ -192,6 +209,8 @@ interface BuildArgs {
   history: string;
   /** 待摘要的正文 */
   content: string;
+  /** 正文是否已带 <bbs_start>/<bbs_end> 时间标签:有则时间走标签、提示词省去 time;无则让 AI 补两端 */
+  hasTimeTags: boolean;
 }
 
 export function fmtItems(items: BuildArgs['items']): string {
@@ -235,6 +254,8 @@ export function buildSummaryPrompt(a: BuildArgs): string {
     items_block: fmtItems(a.items),
     plans_block: fmtPlans(a.openPlans),
     content: a.content,
+    time_field: a.hasTimeTags ? TIME_FIELD_WITH_TAGS : TIME_FIELD_NO_TAGS,
+    time_rule: a.hasTimeTags ? TIME_RULE_WITH_TAGS : TIME_RULE_NO_TAGS,
   });
 }
 
@@ -292,7 +313,7 @@ export const THINKING_CHECKLIST = `【输出前思考】
    - 我准备写的 summary 最后一句是否超出了原文最后一句的范围?若超出,裁掉。
 
 5. 格式自检
-   - time 是否给出了具体数字化日期时间(非"未知/不久后")?
+   - 若【时间规则】要求补 timeStart/timeEnd:是否都给了具体、可定位的时间(非"未知/不久后/某天")?若正文已带时间标签则跳过,不必输出时间字段。
    - 只输出一个 JSON 对象,无 markdown 围栏、无解释。
 
 思考结束后直接输出 JSON,不要在 <thinking> 与 JSON 之间插入任何解释。`;

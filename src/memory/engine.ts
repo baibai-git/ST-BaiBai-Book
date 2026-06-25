@@ -7,7 +7,7 @@ import { addSummary, deriveMemory, finalizeDelta, getLeaf, leafHash, leafValid, 
 import { extractJsonObject } from './json';
 import { clearInjection, refreshInjection, renderHistoryNodes, selectHistoryNodesBefore } from './inject';
 import { buildResummaryPrompt, buildSummaryPrompt, buildWorldInfoSystem, JAILBREAK_PROMPT, THINKING_CHECKLIST, THINKING_PREFILL } from './prompts';
-import { formatRange, inlineTimeTags, parseTimeRange, syncTimeTagRegex } from './timeTag';
+import { clampToTimeTags, inlineTimeTags, parseTimeRange, syncTimeTagRegex } from './timeTag';
 import { memory, recomputeDerived, scheduleLeafFlush } from './store';
 import type { LeafExtra, SummaryDelta } from './types';
 
@@ -30,8 +30,9 @@ function renderMessages(chat: STMessage[], indices: number[], name1: string, nam
       // 双标:既标发言方(用户/角色),又带人名 —— 摘要正文用人名,群聊也能区分谁说的
       const tag = m.is_user ? '用户' : '角色';
       const who = m.is_user ? name1 || 'User' : m.name || name2 || 'Char';
-      // 先把时间标签转成可读文本再清洗,否则 stripHtml 会连同内部时间一起删掉
-      return `【${tag}·${who}】${stripHtml(inlineTimeTags(m.mes))}`;
+      // 处理顺序:先裁剪到 <bbs_start>…</bbs_end>(剔除状态栏等正文外格式)→
+      // 再把时间标签转可读文本(否则 stripHtml 会连内部时间一起删)→ 最后清洗思维链/标签
+      return `【${tag}·${who}】${stripHtml(inlineTimeTags(clampToTimeTags(m.mes)))}`;
     })
     .filter(Boolean)
     .join('\n\n');
@@ -437,6 +438,11 @@ export async function runSummary(aiFloor: number): Promise<void> {
   try {
     const content = renderMessages(chat, targets, ctx.name1, ctx.name2);
 
+    // 时间锚点:先从正文标签读起止时间(权威源)。两端都齐才算「有标签」,提示词据此免去 AI 算时间。
+    // 先裁剪到正文段再解析,跳过思维链/状态栏里可能混入的同名标签。
+    const tag = parseTimeRange(clampToTimeTags(chat[aiFloor].mes));
+    const hasTimeTags = !!(tag.start && tag.end);
+
     // 截止到「被分析楼段之前」的状态与历史(不泄漏未来:重摘早期楼时排除其后叶子)
     const beforeIndex = targets[0];
     const stateBefore = deriveMemory(chat, beforeIndex);
@@ -456,6 +462,7 @@ export async function runSummary(aiFloor: number): Promise<void> {
       openPlans: openPlansOrdered.map(p => ({ kind: p.kind, content: p.content, createdTime: p.createdTime, targetTime: p.targetTime })),
       history,
       content,
+      hasTimeTags,
     });
 
     // 组装:破限(置顶)→ 世界设定(独立 system,有才加)→ 主提示 → 思考清单 → assistant 预填。
@@ -478,20 +485,18 @@ export async function runSummary(aiFloor: number): Promise<void> {
     // 固化 delta(resolve 短序号→稳定 plan id),写成叶子挂到 AI 楼的 extra(随消息/swipe 跟随)
     const storedDelta = finalizeDelta(delta, openPlansOrdered);
 
-    // 时间:优先读正文里的 <bbs_start>/<bbs_end> 标签(权威锚点,与新剧情同源,不漂移);
-    // 取不到才降级用 AI 摘要里的 time 字段 / 既有状态时间。
-    const { start, end } = parseTimeRange(chat[aiFloor].mes);
-    const rangeLabel = formatRange(start, end);
-    // 状态当前时间(覆盖型):用结束时间(本段最后时刻);无标签则保留 AI 给的 time。
-    if (end) storedDelta.time = end;
-    // 展示用 timeLabel:有标签用时间段,否则回退单点
-    const timeLabel = rangeLabel || delta.time || memory.state.time || undefined;
+    // 时间起止:标签优先(权威锚点,与新剧情同源不漂移);标签缺的那端用 AI 补的 timeStart/timeEnd 兜底。
+    const timeStart = tag.start || delta.timeStart?.trim() || undefined;
+    const timeEnd = tag.end || delta.timeEnd?.trim() || delta.time?.trim() || undefined;
+    // 状态当前时间(覆盖型):用结束时间(本段最后时刻);取不到则保留既有状态。
+    if (timeEnd) storedDelta.time = timeEnd;
 
     const leaf: LeafExtra = {
       id: makeLeafId(),
       text: delta.summary.trim(),
       delta: storedDelta,
-      timeLabel,
+      timeStart,
+      timeEnd,
       createdAt: Date.now(),
       srcHash: leafHash(chat[aiFloor].mes),
       v: 1,
@@ -539,25 +544,34 @@ function thresholdForLevel(level: number): number {
   return level === 0 ? apiSettings.leafBatchThreshold : apiSettings.resummaryThreshold;
 }
 
+/** 压缩用的根节点视图:带起止时间(叶子直接取,comp 取已聚合的范围),供向上合并时取边界。 */
+interface RootView {
+  id: string;
+  text: string;
+  createdAt: number;
+  timeStart?: string;
+  timeEnd?: string;
+}
+
 /** 某层级「未被收纳的根节点」,按时间/楼层升序。level0=叶子(扫 chat),level≥1=森林。 */
-function rootsAtLevel(level: number, chat: STMessage[]): { id: string; text: string; createdAt: number }[] {
+function rootsAtLevel(level: number, chat: STMessage[]): RootView[] {
   const collected = new Set<string>();
   for (const s of memory.summaries) for (const c of s.childIds) collected.add(c);
 
   if (level === 0) {
-    const out: { id: string; text: string; createdAt: number }[] = [];
+    const out: RootView[] = [];
     for (let i = 0; i < chat.length; i++) {
       if (!leafValid(chat[i])) continue;
       const lf = getLeaf(chat[i]) as LeafExtra;
       if (collected.has(lf.id)) continue; // 已被某 L1 收纳
-      out.push({ id: lf.id, text: lf.text, createdAt: lf.createdAt }); // 已按楼层序
+      out.push({ id: lf.id, text: lf.text, createdAt: lf.createdAt, timeStart: lf.timeStart, timeEnd: lf.timeEnd }); // 已按楼层序
     }
     return out;
   }
   return memory.summaries
     .filter(s => s.level === level && !collected.has(s.id))
     .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
-    .map(s => ({ id: s.id, text: s.text, createdAt: s.createdAt }));
+    .map(s => ({ id: s.id, text: s.text, createdAt: s.createdAt, timeStart: s.timeStart, timeEnd: s.timeEnd }));
 }
 
 /**
@@ -605,12 +619,17 @@ export async function checkResummary(): Promise<number> {
 
       // 生成上层节点收纳这批(**不删 batch**),时间戳取批内最新,排在它们之后
       const newCreatedAt = Math.max(...batch.map(s => s.createdAt)) + 1;
+      // 起止时间:batch 已按时间升序 → 首个有起始的作 start,末个有结束的作 end
+      const timeStart = batch.find(s => s.timeStart)?.timeStart;
+      const timeEnd = [...batch].reverse().find(s => s.timeEnd)?.timeEnd;
       addSummary({
         text: delta.summary.trim(),
         level: level + 1,
         childIds: batch.map(s => s.id),
         auto: true,
         createdAt: newCreatedAt,
+        timeStart,
+        timeEnd,
       });
       made += 1;
       refreshInjection();

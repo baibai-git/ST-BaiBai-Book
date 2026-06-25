@@ -65,7 +65,11 @@ export interface LeafExtra {
   text: string;
   /** 结构化增量 */
   delta: StoredDelta;
-  /** 生成时的故事内时间快照 */
+  /** 故事内起始时间(来自正文 <bbs_start> 标签;无标签时由 AI 补) */
+  timeStart?: string;
+  /** 故事内结束时间(来自正文 <bbs_end> 标签;无标签时由 AI 补) */
+  timeEnd?: string;
+  /** 旧字段:生成时的故事内时间快照(单值/合并串)。新数据用 timeStart/timeEnd;保留它做旧数据回退展示 */
   timeLabel?: string;
   /** 生成时刻(UI 展示与 tie-break;真实重放顺序以楼层物理顺序为准) */
   createdAt: number;
@@ -89,7 +93,11 @@ export interface MemSummary {
   createdAt: number;
   /** 是否自动生成(false=手动/迁移) */
   auto: boolean;
-  /** 生成时的当前时间快照(便于展示时间线) */
+  /** 故事内起始时间(覆盖范围内第一条叶子的起始) */
+  timeStart?: string;
+  /** 故事内结束时间(覆盖范围内最后一条叶子的结束) */
+  timeEnd?: string;
+  /** 旧字段:生成时的当前时间快照。新数据用 timeStart/timeEnd;保留它做旧数据回退展示 */
   timeLabel?: string;
   /** 直接收纳的下层节点 id(L1→叶子id,L2+→下层压缩节点id) */
   childIds: string[];
@@ -143,8 +151,12 @@ export interface ItemDelta {
 export interface SummaryDelta {
   /** 本楼层叙事摘要正文 */
   summary?: string;
-  /** 覆盖型:故事内当前时间(直接写新值) */
+  /** 覆盖型:故事内当前时间(直接写新值)。仅在正文无时间标签、需 AI 兜底时使用 */
   time?: string;
+  /** 本段起始时间(仅正文缺 <bbs_start> 标签时让 AI 补) */
+  timeStart?: string;
+  /** 本段结束时间(仅正文缺 <bbs_end> 标签时让 AI 补) */
+  timeEnd?: string;
   /** 覆盖型:当前地点(直接写新值) */
   location?: string;
   /** 指令型:物品增删改 */

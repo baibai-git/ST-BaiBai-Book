@@ -16,7 +16,7 @@ import { getContext } from '@/st/context';
 import { getLeaf, leafValid } from './apply';
 import { fmtItems, fmtPlans } from './prompts';
 import { memory } from './store';
-import { timeTagPrompt } from './timeTag';
+import { compactTimeLabel, formatRange, timeTagPrompt } from './timeTag';
 import type { LeafExtra, MemSummary } from './types';
 
 // 以下常量来源:SillyTavern public/script.js
@@ -77,7 +77,9 @@ interface ViewNode {
   id: string;
   kind: 'leaf' | 'comp';
   text: string;
-  timeLabel?: string;
+  timeStart?: string;
+  timeEnd?: string;
+  timeLabel?: string; // 旧数据回退
   createdAt: number;
   childIds: string[]; // comp 才有
   msgIndex: number; // leaf 才有意义(排序键);comp 取 -1
@@ -99,6 +101,8 @@ function buildView(
         id: leaf.id,
         kind: 'leaf',
         text: leaf.text,
+        timeStart: leaf.timeStart,
+        timeEnd: leaf.timeEnd,
         timeLabel: leaf.timeLabel,
         createdAt: leaf.createdAt,
         childIds: [],
@@ -112,6 +116,8 @@ function buildView(
       id: s.id,
       kind: 'comp',
       text: s.text,
+      timeStart: s.timeStart,
+      timeEnd: s.timeEnd,
       timeLabel: s.timeLabel,
       createdAt: s.createdAt,
       childIds: s.childIds ?? [],
@@ -203,9 +209,20 @@ export function selectHistoryNodesBefore(
   return selectNodes(summaries, chat, n => n.msgIndex >= 0 && n.msgIndex < beforeIndex);
 }
 
+/** 节点展示时间:新数据用起止合成,旧数据回退 timeLabel */
+function nodeTime(n: ViewNode): string {
+  if (n.timeStart || n.timeEnd) return formatRange(n.timeStart, n.timeEnd);
+  return n.timeLabel ? compactTimeLabel(n.timeLabel) : '';
+}
+
 /** 把选出的节点拼成历史摘要文本块(带时间标签前缀);空则返回空串 */
 export function renderHistoryNodes(nodes: ViewNode[]): string {
-  return nodes.map(n => (n.timeLabel ? `【${n.timeLabel}】${n.text}` : n.text)).join('\n\n');
+  return nodes
+    .map(n => {
+      const t = nodeTime(n);
+      return t ? `【${t}】${n.text}` : n.text;
+    })
+    .join('\n\n');
 }
 
 /** 组合历史摘要注入文本;无启用摘要时返回空串(注入空串等于清除)。 */

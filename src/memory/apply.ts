@@ -241,6 +241,8 @@ export function addSummary(
     level: s.level ?? 1,
     createdAt: s.createdAt ?? nowMs(),
     auto: s.auto ?? true,
+    timeStart: s.timeStart,
+    timeEnd: s.timeEnd,
     timeLabel: s.timeLabel,
     childIds: s.childIds ?? [],
   };
@@ -316,19 +318,24 @@ export function deleteLeafAt(index: number): boolean {
 }
 
 /**
- * 手动编辑某条消息上的叶子:摘要正文 + 故事内时间。
+ * 手动编辑某条消息上的叶子:摘要正文 + 故事内起止时间。
  * 不改 srcHash(锚定的是正文,不是摘要),故叶子仍有效。
- * time 同时写进 timeLabel(展示)和 delta.time(覆盖型状态,重放即生效)。
+ * timeEnd 同步写进 delta.time(覆盖型当前状态,重放即生效);编辑后清掉旧的 timeLabel(已被起止取代)。
  */
-export function editLeafAt(index: number, text: string, time: string): boolean {
+export function editLeafAt(index: number, text: string, timeStart: string, timeEnd: string): boolean {
   const chat = getContext()?.chat;
   const leaf = getLeaf(chat?.[index]);
   if (!chat || !leaf) return false;
   leaf.text = text.trim();
-  const t = time.trim();
-  leaf.timeLabel = t || undefined;
+  const s = timeStart.trim();
+  const e = timeEnd.trim();
+  leaf.timeStart = s || undefined;
+  leaf.timeEnd = e || undefined;
+  leaf.timeLabel = undefined; // 起止已是权威,旧合并串作废
   leaf.delta = leaf.delta ?? {};
-  if (t) leaf.delta.time = t;
+  // 覆盖型当前时间取结束时间;两端皆空才清除
+  if (e) leaf.delta.time = e;
+  else if (s) leaf.delta.time = s;
   else delete leaf.delta.time;
   chat[index].extra = { ...(chat[index].extra ?? {}), bbs_leaf: leaf };
   recomputeDerived();

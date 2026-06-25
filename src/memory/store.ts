@@ -20,7 +20,9 @@ export const memory = reactive<BaibaiMemory>(createEmptyMemory());
 export interface LeafView {
   id: string;
   text: string;
-  timeLabel?: string;
+  timeStart?: string;
+  timeEnd?: string;
+  timeLabel?: string; // 旧数据回退
   createdAt: number;
   msgIndex: number;
   active: boolean; // 所在消息已隐藏(is_system)
@@ -55,6 +57,8 @@ export function recomputeDerived(): void {
       leaves.push({
         id: leaf.id,
         text: leaf.text,
+        timeStart: leaf.timeStart,
+        timeEnd: leaf.timeEnd,
         timeLabel: leaf.timeLabel,
         createdAt: leaf.createdAt,
         msgIndex: i,

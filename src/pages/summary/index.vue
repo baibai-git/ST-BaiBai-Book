@@ -4,6 +4,7 @@ import { appendOpToLatestLeaf, deleteLeafAt, deleteSummary, editLeafAt, editPlan
 import { apiSettings } from '@/api/settings';
 import { engineState, resummarizeNow, summarizeFloor } from '@/memory/engine';
 import { refreshInjection } from '@/memory/inject';
+import { compactTimeLabel, formatRange, splitTimeLabel } from '@/memory/timeTag';
 import { derivedMeta, memory, recomputeDerived } from '@/memory/store';
 import { computed, nextTick, onMounted, ref } from 'vue';
 
@@ -147,7 +148,9 @@ interface Row {
   kind: 'leaf' | 'comp';
   level: number;
   text: string;
-  timeLabel?: string;
+  timeStart?: string;
+  timeEnd?: string;
+  timeLabel?: string; // 旧数据回退
   createdAt: number;
   sortKey: number;
   floorLo: number; // 覆盖楼层范围下界
@@ -192,6 +195,8 @@ const ordered = computed<Row[]>(() => {
       kind: 'leaf',
       level: 0,
       text: l.text,
+      timeStart: l.timeStart,
+      timeEnd: l.timeEnd,
       timeLabel: l.timeLabel,
       createdAt: l.createdAt,
       sortKey: l.msgIndex,
@@ -225,6 +230,12 @@ const ordered = computed<Row[]>(() => {
   return rows.sort((a, b) => b.sortKey - a.sortKey);
 });
 
+/** 行的展示时间:新数据用 timeStart/timeEnd 合成并压缩;旧数据回退到已固化的 timeLabel(也压缩一次) */
+function rowTime(r: Row): string {
+  if (r.timeStart || r.timeEnd) return formatRange(r.timeStart, r.timeEnd);
+  return r.timeLabel ? compactTimeLabel(r.timeLabel) : '';
+}
+
 function levelLabel(level: number): string {
   if (level === 0) return '摘要';
   return `总结L${level}`;
@@ -249,13 +260,21 @@ function onDelete(r: Row) {
 /* ============ 编辑弹窗 ============
  * 叶子:可改「故事内时间」+ 正文;总结:只压文本,故只改正文。 */
 type Editing =
-  | { kind: 'leaf'; msgIndex: number; text: string; time: string }
+  | { kind: 'leaf'; msgIndex: number; text: string; timeStart: string; timeEnd: string }
   | { kind: 'comp'; compId: string; level: number; text: string };
 const editing = ref<Editing | null>(null);
 
 function openEdit(r: Row) {
   if (r.kind === 'leaf' && typeof r.msgIndex === 'number') {
-    editing.value = { kind: 'leaf', msgIndex: r.msgIndex, text: r.text, time: r.timeLabel ?? '' };
+    // 旧数据无 timeStart/timeEnd 时,从已固化的 timeLabel 拆出起止填入
+    const fb = !r.timeStart && !r.timeEnd ? splitTimeLabel(r.timeLabel) : {};
+    editing.value = {
+      kind: 'leaf',
+      msgIndex: r.msgIndex,
+      text: r.text,
+      timeStart: r.timeStart ?? fb.start ?? '',
+      timeEnd: r.timeEnd ?? fb.end ?? '',
+    };
   } else if (r.kind === 'comp') {
     editing.value = { kind: 'comp', compId: r.key.slice('comp:'.length), level: r.level, text: r.text };
   }
@@ -266,7 +285,7 @@ function cancelEdit() {
 function saveEdit() {
   const e = editing.value;
   if (!e) return;
-  if (e.kind === 'leaf') editLeafAt(e.msgIndex, e.text, e.time);
+  if (e.kind === 'leaf') editLeafAt(e.msgIndex, e.text, e.timeStart, e.timeEnd);
   else editSummary(e.compId, e.text);
   refreshInjection();
   editing.value = null;
@@ -378,12 +397,12 @@ function saveEdit() {
           <template v-if="r.kind === 'comp'">
             <span class="bbs-summary-badge">{{ levelLabel(r.level) }}</span>
             <span class="bbs-summary-loc">{{ floorLabel(r) }}</span>
-            <span v-if="r.timeLabel" class="bbs-summary-time">{{ r.timeLabel }}</span>
+            <span v-if="rowTime(r)" class="bbs-summary-time">{{ rowTime(r) }}</span>
           </template>
           <!-- 摘要:时间作日期题首,楼层用中点轻接;无时间时楼层自身升为题首 -->
           <template v-else>
-            <span v-if="r.timeLabel" class="bbs-summary-dateline">{{ r.timeLabel }}</span>
-            <span class="bbs-summary-floor-inline" :class="{ 'is-lead': !r.timeLabel }">{{ floorLabel(r) }}</span>
+            <span v-if="rowTime(r)" class="bbs-summary-dateline">{{ rowTime(r) }}</span>
+            <span class="bbs-summary-floor-inline" :class="{ 'is-lead': !rowTime(r) }">{{ floorLabel(r) }}</span>
           </template>
           <span v-if="r.stale" class="bbs-summary-stale">待更新</span>
           <span class="bbs-summary-acts">
@@ -494,11 +513,17 @@ function saveEdit() {
           </span>
           <button class="bbs-summary-act" type="button" title="关闭" @click="cancelEdit"><Icon name="close" /></button>
         </header>
-        <!-- 时间仅叶子可编辑;总结只压文本,无时间字段 -->
-        <label v-if="editing.kind === 'leaf'" class="bbs-modal-field">
-          <span class="bbs-modal-label">故事内时间</span>
-          <input v-model="editing.time" class="bbs-input" type="text" placeholder="如 1988/9/29 21:00" />
-        </label>
+        <!-- 时间仅叶子可编辑(起止两端);总结只压文本,无时间字段 -->
+        <div v-if="editing.kind === 'leaf'" class="bbs-modal-field bbs-time-pair">
+          <label class="bbs-time-col">
+            <span class="bbs-modal-label">起始时间</span>
+            <input v-model="editing.timeStart" class="bbs-input" type="text" placeholder="如 1988/9/29 21:00" />
+          </label>
+          <label class="bbs-time-col">
+            <span class="bbs-modal-label">结束时间</span>
+            <input v-model="editing.timeEnd" class="bbs-input" type="text" placeholder="如 1988/9/29 21:30" />
+          </label>
+        </div>
         <label class="bbs-modal-field">
           <span class="bbs-modal-label">{{ editing.kind === 'comp' ? '总结正文' : '摘要正文' }}</span>
           <textarea v-model="editing.text" class="bbs-input bbs-modal-textarea" rows="8"></textarea>
@@ -517,6 +542,18 @@ function saveEdit() {
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+/* 起止时间:两个输入框并排,各占一半 */
+.bbs-time-pair {
+  display: flex;
+  gap: 10px;
+}
+.bbs-time-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .bbs-section-head {
   display: flex;

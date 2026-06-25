@@ -25,8 +25,10 @@ export const TIME_TAG_PROMPT = `【时间锚点要求(系统强制)】
 <${END_TAG}>本段结束时的故事内时间</${END_TAG}>
 
 规则:
-- 时间用具体、数字化的日期时间(如 1988/9/29 21:30),禁止"稍后""不久"等模糊词。
-- 以上一段的结束时间为基准,结合本段剧情合理推进时间。
+- 时间要具体、可明确定位,风格与正文世界观一致:现代题材用数字日期时间(如 1988/9/29 21:30);古风/奇幻题材用相应的纪年与时辰(如 庆历四年暮春·辰时三刻)。重点是「能定位到某一刻」,不强求阿拉伯数字。
+- 禁止"稍后""不久""某天""同一天"等无法定位到具体时刻的模糊说法。
+- 以上一段的结束时间为基准,结合本段剧情合理推进(对话约几分钟、用餐约一小时、过夜跨到次日等)。
+- 若这是故事开篇、此前没有任何已知时间,请你自行设定一个符合本世界观的具体起始时刻,之后以此为基准推进——这是为记忆系统建立时间锚点所必需的合理设定,不算编造;但绝不能用"某天"这类无法定位的占位词敷衍。
 - 标签只各出现一次,分别紧贴正文最前与最后;标签内只有时间,不要写别的。
 - 这两个标签是给记忆系统读取的锚点,请务必每次都输出。`;
 
@@ -48,6 +50,30 @@ export function parseTimeRange(mes: string): { start?: string; end?: string } {
 }
 
 /**
+ * 裁剪到时间标签区间:移除 <bbs_start> 之前、</bbs_end> 之后的所有文本(标签本身保留)。
+ * 用于喂摘要模型前,剔除角色卡的状态栏、页眉页脚等正文之外的格式,避免干扰摘要生成。
+ *
+ * 取「最后一个 <bbs_start>」+「第一个 </bbs_end>」——思维链/状态栏里可能混入同名标签,
+ * 思维链通常在正文前(故真正的开始标签是最后一个),正文的结束标签则是第一个出现的,
+ * 这样能跳过这些干扰标签、精准框出真正的正文段。
+ * 仅在对应标签存在时才裁剪;缺标签的一侧保持原样(两侧都没有则完全不动)。
+ */
+export function clampToTimeTags(mes: string): string {
+  let s = String(mes ?? '');
+  // 最后一个 <bbs_start> 的位置:全局扫一遍取末次
+  const startRe = new RegExp(`<${START_TAG}\\b`, 'gi');
+  let lastStart = -1;
+  for (let m = startRe.exec(s); m; m = startRe.exec(s)) lastStart = m.index;
+  if (lastStart >= 0) s = s.slice(lastStart);
+  // 第一个 </bbs_end>(在已裁过前缀的串里找)
+  const endMatch = s.match(new RegExp(`</${END_TAG}>`, 'i'));
+  if (endMatch && endMatch.index !== undefined) {
+    s = s.slice(0, endMatch.index + endMatch[0].length);
+  }
+  return s;
+}
+
+/**
  * 把正文里的时间标签转成可读内联文本(供喂给摘要模型前预处理)。
  * stripHtml 会把 <bbs_start>…</bbs_start> 整段删掉(含内部时间),摘要模型就看不到时间了;
  * 故先转成「(起始时间:X)/(结束时间:X)」纯文本,再交给 stripHtml 清其余标签。
@@ -58,15 +84,66 @@ export function inlineTimeTags(mes: string): string {
     .replace(RE_END, (_, t) => `(结束时间:${String(t).trim()})`);
 }
 
+// 时间段压缩用的「分隔边界」:回退公共前缀到这些字符之后,避免切到 token 中间。
+// 只含「日期段/时刻段」之间的分隔符(空格 / － 与中文日期单位 年月日),
+// 故意不含 : 与 时/点 —— 那会把 06:45 的时分也切碎(切成 55),只想压掉重复的日期前缀。
+const RANGE_BOUNDARY = /[\s/／\-－年月日]/;
+
+/**
+ * 压缩「起 - 止」时间段:删掉结束时间里与开始时间重复的前缀(多为日期),
+ * 让 "2023/9/10 06:45 - 2023/9/10 06:55" 显示成 "2023/9/10 06:45 - 06:55"。
+ *
+ * 通用做法(不解析具体日期格式):取首尾最长公共前缀,回退到最近的分隔边界(含),
+ * 把这段前缀从结束时间里删掉。标准格式与古风("庆历四年春 辰时")都适用;
+ * 两串前缀不重合时压不动,原样保留全串——零误伤,无需判断「能否解析」。
+ */
+function compactPair(a: string, b: string): string {
+  if (!a || !b) return a || b || '';
+  if (a === b) return a;
+  if (a.startsWith(b)) return a; // 结束时间是开始时间的前缀(无新信息)→ 只显示开始
+  let n = 0;
+  const max = Math.min(a.length, b.length);
+  while (n < max && a[n] === b[n]) n++;
+  // 回退到公共前缀内最后一个边界字符之后
+  let cut = 0;
+  for (let i = 0; i < n; i++) if (RANGE_BOUNDARY.test(a[i])) cut = i + 1;
+  const tail = b.slice(cut).trim();
+  return tail ? `${a} - ${tail}` : a;
+}
+
 /**
  * 把起止时间格式化成展示用的时间段串:
- *  - 都有且不同 → "start - end";都有且相同 → "start";只有一个 → 那一个;都无 → ''。
+ *  - 都有且不同 → 压缩后的 "start - end";都有且相同 → "start";只有一个 → 那一个;都无 → ''。
  */
 export function formatRange(start?: string, end?: string): string {
   const a = start?.trim();
   const b = end?.trim();
-  if (a && b) return a === b ? a : `${a} - ${b}`;
+  if (a && b) return compactPair(a, b);
   return a || b || '';
+}
+
+/**
+ * 把已存为完整串的展示标签("起 - 止")再压缩一次,供列表显示用。
+ * 用于历史数据:旧摘要的 timeLabel 已固化成完整串,展示时即时压缩,无需迁移。
+ * 对已压缩的标签幂等(再切再压结果不变)。无 " - " 分隔的单点串原样返回。
+ */
+export function compactTimeLabel(label: string): string {
+  const s = String(label ?? '').trim();
+  const i = s.indexOf(' - ');
+  if (i < 0) return s;
+  return compactPair(s.slice(0, i).trim(), s.slice(i + 3).trim());
+}
+
+/**
+ * 把旧数据里固化成单字段的 timeLabel 拆回 {start,end},供迁移到 timeStart/timeEnd。
+ * 无 " - " 分隔的单点串 → start=end=该串。空串 → 两者皆 undefined。
+ */
+export function splitTimeLabel(label?: string): { start?: string; end?: string } {
+  const s = String(label ?? '').trim();
+  if (!s) return {};
+  const i = s.indexOf(' - ');
+  if (i < 0) return { start: s, end: s };
+  return { start: s.slice(0, i).trim() || undefined, end: s.slice(i + 3).trim() || undefined };
 }
 
 /* ============ 自动注册「仅显示层隐藏」正则到 ST ============ */
