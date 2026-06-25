@@ -73,7 +73,7 @@ export function formatRange(start?: string, end?: string): string {
 
 // ST 全局正则脚本存在 extension_settings.regex(数组)。我们用固定 id 标识自己这条,做到幂等。
 const HIDE_SCRIPT_ID = 'bbs-time-tag-hide';
-const HIDE_SCRIPT_NAME = '柏宝书·隐藏时间标签';
+const HIDE_SCRIPT_NAME = '柏宝书 · 隐藏时间标签';
 // regex_placement(见 ST regex/engine.js):0=MD_DISPLAY 1=USER_INPUT 2=AI_OUTPUT
 const PLACEMENT_MD_DISPLAY = 0;
 const PLACEMENT_USER_INPUT = 1;

@@ -109,7 +109,7 @@
   --bbs-shadow: 0 20px 56px -22px oklch(0 0 0 / 0.65), 0 4px 14px -8px oklch(0 0 0 / 0.5);
 }
 
-/* ========== 粉彩梦幻乐园 ==========
+/* ========== 粉彩 ==========
    独立主题,不分昼夜。薰衣草粉纸底 + 玫瑰强调,梦幻而不失可读性。
    梦幻的薰衣草/天蓝/婴儿粉太浅,只用于底/线/染色;文字与强调用够深的梅紫/玫瑰,
    保证 WCAG AA。对比度(主底为基准):ink 10.5、ink-soft 5.3、ink-muted 3.2、accent 4.3。 */
@@ -156,6 +156,7 @@
   border-radius: 4px;
   background: var(--bbs-surface);
 }
+
 .bbs-root[data-theme='pastel'] .bbs-checkbox:checked {
   border-color: var(--bbs-accent);
   background-color: var(--bbs-accent);

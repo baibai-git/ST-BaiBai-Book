@@ -22,7 +22,7 @@ export interface ThemeDef {
 export const THEMES: ThemeDef[] = [
   { value: 'day', label: '日间', icon: 'sun' },
   { value: 'night', label: '夜间', icon: 'moon' },
-  { value: 'pastel', label: '粉彩梦幻乐园', icon: 'sparkles' },
+  { value: 'pastel', label: '粉彩', icon: 'sparkles' },
 ];
 
 interface UiState {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue';
-import { appendOpToLatestLeaf, deleteLeafAt, deleteSummary, editLeafAt, editSummary } from '@/memory/apply';
+import { appendOpToLatestLeaf, deleteLeafAt, deleteSummary, editLeafAt, editPlan, editSummary } from '@/memory/apply';
 import { apiSettings } from '@/api/settings';
 import { engineState, resummarizeNow, summarizeFloor } from '@/memory/engine';
 import { refreshInjection } from '@/memory/inject';
@@ -10,6 +10,9 @@ import { computed, nextTick, onMounted, ref } from 'vue';
 // 打开摘要页时强制重算一次派生:未摘要楼层等派生缓存只在特定事件刷新,
 // 边聊边攒的新 AI 楼可能没触发刷新,进页先对齐一次,避免列表漏楼。
 onMounted(() => recomputeDerived());
+
+// 触屏判定:用于跳过弹窗自动聚焦(移动端自动聚焦会弹出输入法挡住界面)。
+const isTouch = typeof window !== 'undefined' && window.matchMedia?.('(hover: none)').matches;
 
 /* ============ 悬念簿(顶部)============ */
 const newKind = ref<'plan' | 'suspense'>('plan');
@@ -24,7 +27,8 @@ function openComposer() {
   newContent.value = '';
   newTargetTime.value = '';
   composerOpen.value = true;
-  void nextTick(() => contentInput.value?.focus());
+  // 仅在非触屏自动聚焦:移动端自动聚焦会立刻弹出输入法,挡住弹窗、体验差。
+  if (!isTouch) void nextTick(() => contentInput.value?.focus());
 }
 function closeComposer() {
   composerOpen.value = false;
@@ -58,6 +62,33 @@ function addPlan() {
 }
 function removePlan(id: string) {
   appendOpToLatestLeaf({ plans: { remove: [id] } });
+}
+
+/* —— 编辑计划/悬念(弹窗)—— */
+const editingPlan = ref<{ id: string; kind: 'plan' | 'suspense'; content: string; createdTime: string; targetTime: string } | null>(null);
+function openPlanEdit(p: { id: string; kind: 'plan' | 'suspense'; content: string; createdTime?: string; targetTime?: string }) {
+  editingPlan.value = {
+    id: p.id,
+    kind: p.kind,
+    content: p.content,
+    createdTime: p.createdTime ?? '',
+    targetTime: p.targetTime ?? '',
+  };
+}
+function cancelPlanEdit() {
+  editingPlan.value = null;
+}
+function savePlanEdit() {
+  const e = editingPlan.value;
+  if (!e || !e.content.trim()) return;
+  editPlan(e.id, {
+    content: e.content,
+    createdTime: e.createdTime,
+    // 目标时间仅计划有意义;悬念保持空
+    targetTime: e.kind === 'plan' ? e.targetTime : '',
+  });
+  refreshInjection();
+  editingPlan.value = null;
 }
 
 /* ============ 未摘要楼层 ============
@@ -263,7 +294,10 @@ function saveEdit() {
         <div class="bbs-plan-head">
           <span class="bbs-plan-kind" :class="p.kind">{{ p.kind === 'suspense' ? '悬念' : '计划' }}</span>
           <span v-if="planFloor(p.id) !== undefined" class="bbs-plan-floor">#{{ planFloor(p.id) }}</span>
-          <button class="bbs-plan-del" type="button" title="删除" @click="removePlan(p.id)"><Icon name="close" /></button>
+          <span class="bbs-plan-acts">
+            <button class="bbs-plan-act" type="button" title="编辑" @click="openPlanEdit(p)"><Icon name="edit" /></button>
+            <button class="bbs-plan-act bbs-plan-del" type="button" title="删除" @click="removePlan(p.id)"><Icon name="close" /></button>
+          </span>
         </div>
         <p class="bbs-plan-content">{{ p.content }}</p>
         <!-- 故事内时间:立于(创建时间)/ 目标(目标时间),任一存在才显示 -->
@@ -421,6 +455,32 @@ function saveEdit() {
       </div>
     </div>
 
+    <!-- ===== 编辑计划 / 悬念弹窗 ===== -->
+    <div v-if="editingPlan" class="bbs-modal-mask" @click.self="cancelPlanEdit">
+      <div class="bbs-modal" role="dialog" aria-modal="true" aria-label="编辑计划或悬念">
+        <header class="bbs-modal-head">
+          <span class="bbs-modal-title">编辑{{ editingPlan.kind === 'suspense' ? '悬念' : '计划' }}</span>
+          <button class="bbs-summary-act" type="button" title="关闭" @click="cancelPlanEdit"><Icon name="close" /></button>
+        </header>
+        <label class="bbs-modal-field">
+          <span class="bbs-modal-label">内容</span>
+          <textarea v-model="editingPlan.content" class="bbs-input bbs-modal-textarea" rows="3"></textarea>
+        </label>
+        <label class="bbs-modal-field">
+          <span class="bbs-modal-label">创建时间(可选)</span>
+          <input v-model="editingPlan.createdTime" class="bbs-input" type="text" placeholder="故事内时间,如 1988/9/29" />
+        </label>
+        <label v-if="editingPlan.kind === 'plan'" class="bbs-modal-field">
+          <span class="bbs-modal-label">目标时间(可选)</span>
+          <input v-model="editingPlan.targetTime" class="bbs-input" type="text" placeholder="如 放学后 / 1988/10/1;模糊或留空都可" />
+        </label>
+        <footer class="bbs-modal-foot">
+          <button class="bbs-btn" type="button" @click="cancelPlanEdit">取消</button>
+          <button class="bbs-btn bbs-btn-primary" type="button" :disabled="!editingPlan.content.trim()" @click="savePlanEdit">保存</button>
+        </footer>
+      </div>
+    </div>
+
     <!-- ===== 编辑弹窗 ===== -->
     <!-- 不用 Teleport:Teleport to="body" 会把弹窗送到 shadow root 之外的 light DOM,
          那里既拿不到本组件的 scoped 样式、也拿不到 --bbs-* 主题变量(变量定义在 shadow
@@ -562,9 +622,21 @@ function saveEdit() {
   padding: 1px 7px;
   font-variant-numeric: tabular-nums;
 }
-/* 删除是次要破坏性动作:小而 muted,平时低调;桌面 hover/聚焦该卡才浮现 */
-.bbs-plan-del {
+/* 动作组(编辑/删除)推到最右;平时低调,桌面 hover/聚焦该卡才浮现 */
+.bbs-plan-acts {
   margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.bbs-plan:hover .bbs-plan-acts,
+.bbs-plan:focus-within .bbs-plan-acts {
+  opacity: 1;
+}
+/* 单个动作键:小而 muted */
+.bbs-plan-act {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -578,12 +650,11 @@ function saveEdit() {
   color: var(--bbs-ink-muted);
   font-size: 13px;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  transition: color 0.15s, background 0.15s;
 }
-.bbs-plan:hover .bbs-plan-del,
-.bbs-plan:focus-within .bbs-plan-del {
-  opacity: 1;
+.bbs-plan-act:hover {
+  color: var(--bbs-accent);
+  background: var(--bbs-surface-2);
 }
 .bbs-plan-del:hover {
   color: var(--bbs-danger);
@@ -922,13 +993,13 @@ function saveEdit() {
 
 /* ============ 触屏:没有 hover,动作键常显但低调(非大色块) ============ */
 @media (hover: none) {
-  /* 触屏看不到 hover 浮现,删除/编辑键必须常显——但保持小而 muted,不喧宾夺主 */
-  .bbs-plan-del,
+  /* 触屏看不到 hover 浮现,编辑/删除键必须常显——但保持小而 muted,不喧宾夺主 */
+  .bbs-plan-acts,
   .bbs-summary-acts {
     opacity: 1;
   }
   /* 触达区略放大到 ~32px(够点),图标维持小巧;不再是 40×40 的常亮大块 */
-  .bbs-plan-del,
+  .bbs-plan-act,
   .bbs-summary-act {
     width: 32px;
     height: 32px;

@@ -337,6 +337,46 @@ export function editLeafAt(index: number, text: string, time: string): boolean {
 }
 
 /**
+ * 编辑一条计划/悬念:改 content / createdTime / targetTime。
+ * 计划 id = `plan:${叶子id}#${在该叶子 add 数组里的序号}`,据此定位到产生它的叶子的 delta.plans.add[idx]。
+ * 不改 srcHash(锚定正文,与 delta 无关),叶子仍有效;改完重算派生 + 落盘。
+ */
+export function editPlan(
+  planIdStr: string,
+  patch: { content?: string; createdTime?: string; targetTime?: string },
+): boolean {
+  const m = planIdStr.match(/^plan:(.+)#(\d+)$/);
+  if (!m) return false;
+  const leafId = m[1];
+  const addIdx = Number(m[2]);
+  const chat = getContext()?.chat;
+  if (!chat) return false;
+
+  // 找到 id 匹配的有效叶子
+  let index = -1;
+  for (let i = 0; i < chat.length; i++) {
+    const lf = getLeaf(chat[i]);
+    if (lf && lf.id === leafId && leafValid(chat[i])) {
+      index = i;
+      break;
+    }
+  }
+  if (index < 0) return false;
+  const leaf = getLeaf(chat[index])!;
+  const add = leaf.delta?.plans?.add?.[addIdx];
+  if (!add) return false;
+
+  if (typeof patch.content === 'string') add.content = patch.content.trim();
+  if (patch.createdTime !== undefined) add.createdTime = patch.createdTime.trim() || undefined;
+  if (patch.targetTime !== undefined) add.targetTime = patch.targetTime.trim() || undefined;
+
+  chat[index].extra = { ...(chat[index].extra ?? {}), bbs_leaf: leaf };
+  recomputeDerived();
+  scheduleLeafFlush();
+  return true;
+}
+
+/**
  * 编辑一个压缩节点(总结)的正文。总结只压文本、不含结构化数据,
  * 故只改 text 字段即可,无需 recompute。
  */
