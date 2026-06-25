@@ -141,6 +141,38 @@ async function pullModels(ch: ApiChannel) {
   }
 }
 
+/* —— 模型可搜索下拉(combobox):输入框既是当前值也是过滤词,聚焦弹出过滤列表 —— */
+const modelMenuOpen = ref(false);
+const modelQuery = ref(''); // 聚焦后用户输入的过滤词;失焦时清空
+// 已拉取到的当前渠道模型列表
+const modelList = computed<string[]>(() => {
+  const id = editingChannel.value?.id;
+  return id ? models.value[id] ?? [] : [];
+});
+// 过滤:有 query 按子串(大小写不敏感)过滤;为空则显示全部。性能上限 200 条,避免超长列表卡顿。
+const filteredModels = computed<string[]>(() => {
+  const q = modelQuery.value.trim().toLowerCase();
+  const list = modelList.value;
+  const out = q ? list.filter(m => m.toLowerCase().includes(q)) : list;
+  return out.slice(0, 200);
+});
+function openModelMenu() {
+  modelQuery.value = '';
+  modelMenuOpen.value = true;
+}
+function pickModel(m: string) {
+  if (editingChannel.value) editingChannel.value.model = m;
+  modelMenuOpen.value = false;
+  modelQuery.value = '';
+}
+// 失焦延迟关闭,让 option 的 mousedown/click 先生效
+function closeModelMenuSoon() {
+  setTimeout(() => {
+    modelMenuOpen.value = false;
+    modelQuery.value = '';
+  }, 150);
+}
+
 /* —— 自定义提示词:列表(摘要/总结/破限/时间标签),点开在弹窗里编辑大文本 —— */
 type PromptKey = 'summary' | 'resummary' | 'jailbreak' | 'timeTag';
 interface PromptMeta {
@@ -403,32 +435,32 @@ function insertMacro(token: string) {
           <span class="bbs-field-label">自动隐藏已摘要消息</span>
           <input v-model="apiSettings.autoHide" type="checkbox" class="bbs-checkbox" />
         </label>
-        <p class="bbs-field-hint">关闭后仅生成摘要、不隐藏原文(原文与摘要会重复占用上下文)。</p>
+        <p class="bbs-field-hint">关闭后仅摘要、不隐藏原文。</p>
         <label class="bbs-switch-row">
           <span class="bbs-field-label">正文时间标签</span>
           <input v-model="apiSettings.timeTagEnabled" type="checkbox" class="bbs-checkbox" />
         </label>
-        <p class="bbs-field-hint">开启后向主对话注入「固定提示词」,要求 AI 每条正文前后输出时间标签(作为剧情时间锚点,让摘要与新剧情时间一致),并自动注册 ST 正则把标签仅在显示层隐藏(不影响发送)。提示词可在下方「自定义提示词 → 固定提示词」里改。</p>
+        <p class="bbs-field-hint">让 AI 在正文前后输出时间标签作为剧情时间锚点,标签仅显示层隐藏、不影响发送。</p>
         <label class="bbs-switch-row">
           <span class="bbs-field-label">积压过多时拦截发送</span>
           <input v-model="apiSettings.blockOnBacklog" type="checkbox" class="bbs-checkbox" />
         </label>
-        <p class="bbs-field-hint">发消息前若保留窗口外仍有「已滑出窗口却仍未摘要」的楼层(哪怕只有 1 层),拦截本次生成并插一条提示楼,引导先去补摘,避免漏摘导致剧情断层。</p>
+        <p class="bbs-field-hint">保留窗口外仍有未摘楼层时拦截发送,提示先补摘,避免漏摘断层。</p>
         <label class="bbs-num-row">
           <span class="bbs-field-label">保留最近 AI 消息数</span>
           <input v-model.number="apiSettings.keepRecent" class="bbs-input bbs-num" type="number" min="0" />
         </label>
-        <p class="bbs-field-hint">滑动窗口:最近 N 条 AI 消息发送全文;更早的自动生成摘要并从主对话隐藏,摘要会以系统提示注入回上下文,主模型仍可感知。</p>
+        <p class="bbs-field-hint">保留多少条 AI 消息发送全文,超出部分自动隐藏并发送摘要。</p>
         <label class="bbs-num-row">
-          <span class="bbs-field-label">每次总结 AI 消息数(0=关闭)</span>
+          <span class="bbs-field-label">每次总结 AI 消息数</span>
           <input v-model.number="apiSettings.leafBatchThreshold" class="bbs-input bbs-num" type="number" min="0" />
         </label>
-        <p class="bbs-field-hint">楼层摘要积累到这么多条时,把它们压成一条上层「总结」(底层摘要保留,可随时删总结展开)。</p>
+        <p class="bbs-field-hint">每次总结多少条摘要,不计算 user 楼层,0 为关闭自动总结。</p>
         <label class="bbs-num-row">
-          <span class="bbs-field-label">总结再压缩阈值(0=关闭)</span>
+          <span class="bbs-field-label">二次总结</span>
           <input v-model.number="apiSettings.resummaryThreshold" class="bbs-input bbs-num" type="number" min="0" />
         </label>
-        <p class="bbs-field-hint">总结(及更高层)积累到这么多条时,继续向上压成更高一层总结,逐级递归。</p>
+        <p class="bbs-field-hint">总结达到多少条后再次进行总结,0 为关闭二次总结。</p>
       </Collapsible>
 
       <!-- 排除角色 -->
@@ -572,10 +604,29 @@ function insertMacro(token: string) {
         <label class="bbs-modal-field">
           <span class="bbs-modal-label">模型</span>
           <div class="bbs-model-row">
-            <select v-if="models[editingChannel.id]?.length" v-model="editingChannel.model" class="bbs-input">
-              <option v-for="m in models[editingChannel.id]" :key="m" :value="m">{{ m }}</option>
-            </select>
-            <input v-else v-model="editingChannel.model" class="bbs-input" placeholder="模型名,如 gpt-4o-mini" />
+            <!-- 可搜索 combobox:已拉取到模型列表时,聚焦弹出过滤菜单;没列表时就是普通输入框 -->
+            <div class="bbs-combo">
+              <input
+                v-model="editingChannel.model"
+                class="bbs-input"
+                :placeholder="modelList.length ? '搜索或输入模型名…' : '模型名,如 gpt-4o-mini'"
+                @focus="openModelMenu"
+                @input="modelQuery = editingChannel.model; modelMenuOpen = true"
+                @blur="closeModelMenuSoon"
+              />
+              <ul v-if="modelMenuOpen && modelList.length" class="bbs-combo-menu">
+                <li v-if="!filteredModels.length" class="bbs-combo-empty">无匹配模型</li>
+                <li
+                  v-for="m in filteredModels"
+                  :key="m"
+                  class="bbs-combo-item"
+                  :class="{ 'is-active': m === editingChannel.model }"
+                  @mousedown.prevent="pickModel(m)"
+                >
+                  {{ m }}
+                </li>
+              </ul>
+            </div>
             <button
               class="bbs-icon-mini"
               type="button"
@@ -823,6 +874,52 @@ function insertMacro(token: string) {
   background-repeat: no-repeat;
   background-position: right 8px center;
   background-size: 14px;
+}
+/* —— 模型可搜索 combobox —— */
+.bbs-combo {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.bbs-combo .bbs-input {
+  width: 100%;
+}
+/* 过滤菜单:绝对定位贴在输入框下方,限高滚动,长列表不撑爆弹窗 */
+.bbs-combo-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 6;
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--bbs-surface);
+  border: 1px solid var(--bbs-line-strong);
+  border-radius: var(--bbs-radius-sm);
+  box-shadow: var(--bbs-shadow);
+}
+.bbs-combo-item {
+  padding: 7px 9px;
+  border-radius: var(--bbs-radius-sm);
+  font-size: 12.5px;
+  color: var(--bbs-ink);
+  cursor: pointer;
+  word-break: break-all;
+}
+.bbs-combo-item:hover {
+  background: var(--bbs-surface-2);
+}
+.bbs-combo-item.is-active {
+  color: var(--bbs-accent);
+  font-weight: 600;
+}
+.bbs-combo-empty {
+  padding: 7px 9px;
+  font-size: 12px;
+  color: var(--bbs-ink-muted);
 }
 
 /* 小一号按钮:用于「添加渠道」等次级操作 */
