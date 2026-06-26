@@ -2,6 +2,7 @@ import { getContext, type STMessage } from '@/st/context';
 import { reactive } from 'vue';
 import { deriveMemory, getLeaf, leafHash, leafValid } from './apply';
 import { isAiFloor, pendingAiFloors } from './engine';
+import { latestStoryTime } from './timeTag';
 import type { BaibaiMemory, LeafExtra, MemSummary, StoredDelta } from './types';
 import { createEmptyMemory, MEMORY_KEY, MEMORY_VERSION } from './types';
 
@@ -28,10 +29,12 @@ export interface LeafView {
   active: boolean; // 所在消息已隐藏(is_system)
   stale: boolean; // 正文已变、尚未重摘
 }
-export const derivedMeta = reactive<{ hasLeaf: boolean; leaves: LeafView[]; pendingFloors: number[] }>({
+export const derivedMeta = reactive<{ hasLeaf: boolean; leaves: LeafView[]; pendingFloors: number[]; latestStoryTime: string }>({
   hasLeaf: false,
   leaves: [],
   pendingFloors: [],
+  // 故事内最新时间:从正文标签实时读(不依赖是否已摘),供摘要页展示与相对时间参照
+  latestStoryTime: '',
 });
 
 /** 重放 chat 得到 state/items/plans,原地写回;并刷新 derivedMeta */
@@ -69,6 +72,7 @@ export function recomputeDerived(): void {
   }
   derivedMeta.leaves = leaves;
   derivedMeta.hasLeaf = leaves.some(l => !l.stale);
+  derivedMeta.latestStoryTime = latestStoryTime(chat);
   // 待摘要楼层(AI 楼且无有效叶子),供摘要页「未摘要楼层」列表逐楼补摘
   derivedMeta.pendingFloors = chat ? pendingAiFloors(chat) : [];
 }

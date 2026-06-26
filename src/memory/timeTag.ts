@@ -10,7 +10,7 @@
  */
 
 import { apiSettings } from '@/api/settings';
-import { getContext } from '@/st/context';
+import { getContext, type STMessage } from '@/st/context';
 
 /** 标签固定标识(解析正则与隐藏正则都依赖它) */
 export const START_TAG = 'bbs_start';
@@ -47,6 +47,26 @@ export function parseTimeRange(mes: string): { start?: string; end?: string } {
   const start = s.match(RE_START)?.[1]?.trim() || undefined;
   const end = s.match(RE_END)?.[1]?.trim() || undefined;
   return { start, end };
+}
+
+/**
+ * 当前「故事内最新时间」:从 chat 末尾往前扫,取第一条能从正文标签解析出的时间(end 优先,缺则 start)。
+ *
+ * 为什么不直接用派生的 memory.state.time:那个只重放「已生成叶子」的楼层,最新几层没摘时就停在旧值。
+ * 而最新 AI 楼正文里本就带 <bbs_end>,这里直接读它,无论摘没摘都拿到真实最新时间。
+ * 用途:① 摘要页「当前时间」展示;② 历史摘要注入时相对时间的参照点(「现在」)。
+ * 解析不到(纯架空/无标签)→ 返回空串,调用方各自回退。
+ */
+export function latestStoryTime(chat: STMessage[] | null): string {
+  if (!chat) return '';
+  for (let i = chat.length - 1; i >= 0; i--) {
+    const m = chat[i];
+    if (typeof m?.mes !== 'string' || !m.mes) continue;
+    const { start, end } = parseTimeRange(clampToTimeTags(m.mes));
+    const t = end || start;
+    if (t) return t;
+  }
+  return '';
 }
 
 /**

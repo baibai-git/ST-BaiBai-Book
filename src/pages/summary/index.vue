@@ -5,6 +5,7 @@ import { apiSettings } from '@/api/settings';
 import { engineState, resummarizeNow, summarizeFloor } from '@/memory/engine';
 import { refreshInjection } from '@/memory/inject';
 import { compactTimeLabel, formatRange, splitTimeLabel } from '@/memory/timeTag';
+import { relativeTimeLabel } from '@/memory/timeRel';
 import { derivedMeta, memory, recomputeDerived } from '@/memory/store';
 import { computed, nextTick, onMounted, ref } from 'vue';
 
@@ -235,6 +236,15 @@ function rowTime(r: Row): string {
   if (r.timeStart || r.timeEnd) return formatRange(r.timeStart, r.timeEnd);
   return r.timeLabel ? compactTimeLabel(r.timeLabel) : '';
 }
+/** 行的相对时间前缀(如「昨天」):参照故事内最新时间;无法解析则空串 */
+function rowRelative(r: Row): string {
+  const event = r.timeEnd || r.timeStart || (r.timeLabel ? splitTimeLabel(r.timeLabel).end : '') || '';
+  return relativeTimeLabel(event, derivedMeta.latestStoryTime);
+}
+
+// 当前时间:优先读正文标签实时算出的「故事内最新时间」(不受最新楼是否已摘影响);
+// 取不到再回退派生的 state.time(老数据/无标签场景)。修掉「最新楼未摘时显示旧时间」的问题。
+const currentTime = computed(() => derivedMeta.latestStoryTime || memory.state.time);
 
 function levelLabel(level: number): string {
   if (level === 0) return '摘要';
@@ -372,10 +382,10 @@ function saveEdit() {
     </div>
 
     <!-- 当前状态 -->
-    <div v-if="memory.state.time || memory.state.location" class="bbs-state">
-      <div v-if="memory.state.time" class="bbs-state-item">
+    <div v-if="currentTime || memory.state.location" class="bbs-state">
+      <div v-if="currentTime" class="bbs-state-item">
         <span class="bbs-state-key">时间</span>
-        <span class="bbs-state-val">{{ memory.state.time }}</span>
+        <span class="bbs-state-val">{{ currentTime }}</span>
       </div>
       <div v-if="memory.state.location" class="bbs-state-item">
         <span class="bbs-state-key">地点</span>
@@ -397,11 +407,15 @@ function saveEdit() {
           <template v-if="r.kind === 'comp'">
             <span class="bbs-summary-badge">{{ levelLabel(r.level) }}</span>
             <span class="bbs-summary-loc">{{ floorLabel(r) }}</span>
-            <span v-if="rowTime(r)" class="bbs-summary-time">{{ rowTime(r) }}</span>
+            <span v-if="rowTime(r)" class="bbs-summary-time">
+              <span v-if="rowRelative(r)" class="bbs-summary-rel">({{ rowRelative(r) }})</span>{{ rowTime(r) }}
+            </span>
           </template>
           <!-- 摘要:时间作日期题首,楼层用中点轻接;无时间时楼层自身升为题首 -->
           <template v-else>
-            <span v-if="rowTime(r)" class="bbs-summary-dateline">{{ rowTime(r) }}</span>
+            <span v-if="rowTime(r)" class="bbs-summary-dateline">
+              <span v-if="rowRelative(r)" class="bbs-summary-rel">({{ rowRelative(r) }})</span>{{ rowTime(r) }}
+            </span>
             <span class="bbs-summary-floor-inline" :class="{ 'is-lead': !rowTime(r) }">{{ floorLabel(r) }}</span>
           </template>
           <span v-if="r.stale" class="bbs-summary-stale">待更新</span>
@@ -971,6 +985,12 @@ function saveEdit() {
 .bbs-summary-time {
   font-size: 12px;
   color: var(--bbs-ink-soft);
+}
+/* 相对时间前缀(昨天/3天前…):弱化为强调色小字,贴在绝对时间前 */
+.bbs-summary-rel {
+  margin-right: 4px;
+  color: var(--bbs-accent);
+  font-weight: 600;
 }
 /* 动作组靠右;平时隐身,hover/聚焦该卡才浮现 */
 .bbs-summary-acts {

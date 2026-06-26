@@ -16,7 +16,8 @@ import { getContext } from '@/st/context';
 import { getLeaf, leafValid } from './apply';
 import { fmtItems, fmtPlans } from './prompts';
 import { memory } from './store';
-import { compactTimeLabel, formatRange, timeTagPrompt } from './timeTag';
+import { compactTimeLabel, formatRange, latestStoryTime, splitTimeLabel, timeTagPrompt } from './timeTag';
+import { relativeTimeLabel } from './timeRel';
 import type { LeafExtra, MemSummary } from './types';
 
 // 以下常量来源:SillyTavern public/script.js
@@ -225,6 +226,29 @@ export function renderHistoryNodes(nodes: ViewNode[]): string {
     .join('\n\n');
 }
 
+/** 节点的「事件时间」:用结束时间(剧情已到达的时刻);缺则回退起始,再回退旧 timeLabel 的结束端 */
+function nodeEventTime(n: ViewNode): string {
+  if (n.timeEnd) return n.timeEnd;
+  if (n.timeStart) return n.timeStart;
+  return n.timeLabel ? splitTimeLabel(n.timeLabel).end ?? '' : '';
+}
+
+/**
+ * 注入专用:在绝对时间前再加一个相对前缀(如【(昨天) 1988/9/29 21:30】),帮主模型感知时间距离。
+ * 参照点 now = 故事内最新时间;无法解析相对差的(架空纪年等)降级为只显示绝对时间。
+ * 不并入 renderHistoryNodes —— 那个被摘要模型上下文复用,不能带相对前缀(会污染且参照点不同)。
+ */
+function renderHistoryNodesWithRelative(nodes: ViewNode[], now: string): string {
+  return nodes
+    .map(n => {
+      const t = nodeTime(n);
+      if (!t) return n.text;
+      const rel = relativeTimeLabel(nodeEventTime(n), now);
+      return rel ? `【(${rel}) ${t}】${n.text}` : `【${t}】${n.text}`;
+    })
+    .join('\n\n');
+}
+
 /** 组合历史摘要注入文本;无启用摘要时返回空串(注入空串等于清除)。 */
 export function buildHistoryInjectionText(): string {
   const chat = getContext()?.chat ?? null;
@@ -232,7 +256,8 @@ export function buildHistoryInjectionText(): string {
   // 从森林选「最高存活压缩层」节点(被收纳的不重复、窗口内全文叶子不注入)
   const sums = selectInjectionNodes(memory.summaries, chat);
   if (!sums.length) return '';
-  return `[历史剧情摘要]\n${renderHistoryNodes(sums)}`;
+  // 注入路径带相对时间前缀;参照点 = 故事内最新时间(读正文标签,不受是否已摘影响)
+  return `[历史剧情摘要]\n${renderHistoryNodesWithRelative(sums, latestStoryTime(chat))}`;
 }
 
 /** 组合当前结构化状态注入文本;无有意义状态时返回空串。 */
