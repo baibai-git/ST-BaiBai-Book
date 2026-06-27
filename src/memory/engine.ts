@@ -583,6 +583,8 @@ async function runSummaryInner(aiFloor: number): Promise<void> {
       timeStart,
       timeEnd,
       createdAt: Date.now(),
+      // 记录生成时所在页码,供 leafValid 判定归属(翻到别页时不串扰);缺 swipe_id 按第一页 0
+      swipe: typeof chat[aiFloor].swipe_id === 'number' ? chat[aiFloor].swipe_id : 0,
       v: 1,
     };
     chat[aiFloor].extra = { ...(chat[aiFloor].extra ?? {}), bbs_leaf: leaf };

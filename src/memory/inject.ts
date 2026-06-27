@@ -18,7 +18,11 @@ import { fmtItems, fmtPlans } from './prompts';
 import { memory } from './store';
 import { compactTimeLabel, formatRange, latestStoryTime, splitTimeLabel, timeTagPrompt } from './timeTag';
 import { relativeTimeLabel } from './timeRel';
+import { selectViewNodes, type ViewNode } from './select';
 import type { LeafExtra, MemSummary } from './types';
+
+// 摘要页列表复用同一套选择逻辑,经此 re-export(纯算法在 select.ts,零依赖、可单测)
+export { selectViewNodes, type ViewNode };
 
 // 以下常量来源:SillyTavern public/script.js
 //   extension_prompt_types.IN_CHAT = 1   (script.js:486)
@@ -74,20 +78,6 @@ function resolveStateInjectionDepth(chat: STMessage[] | null): number {
   return STATE_INJECT_DEPTH_BEFORE_LATEST_AI;
 }
 
-/** 统一视图节点:叶子来自 chat 扫描,压缩节点来自森林,childIds 跨存储连接 */
-interface ViewNode {
-  id: string;
-  kind: 'leaf' | 'comp';
-  text: string;
-  timeStart?: string;
-  timeEnd?: string;
-  timeLabel?: string; // 旧数据回退
-  createdAt: number;
-  childIds: string[]; // comp 才有
-  msgIndex: number; // leaf 才有意义(排序键);comp 取 -1
-  active: boolean; // leaf:所在消息已隐藏
-}
-
 /** 构建统一森林视图:叶子(leafValid)+ 压缩节点,根 = 未被任何 childIds 引用者 */
 function buildView(
   summaries: MemSummary[],
@@ -102,6 +92,7 @@ function buildView(
       byId.set(leaf.id, {
         id: leaf.id,
         kind: 'leaf',
+        level: 0,
         text: leaf.text,
         timeStart: leaf.timeStart,
         timeEnd: leaf.timeEnd,
@@ -117,6 +108,7 @@ function buildView(
     byId.set(s.id, {
       id: s.id,
       kind: 'comp',
+      level: s.level,
       text: s.text,
       timeStart: s.timeStart,
       timeEnd: s.timeEnd,
@@ -139,55 +131,19 @@ function buildView(
  * (省 token);否则压缩节点降级、逐子递归。叶子「合格」由 leafEligible 判定。
  *  - 注入场景:合格 = 已隐藏(active),用 selectInjectionNodes。
  *  - 分析历史场景:合格 = 楼层在被分析楼之前,用 selectHistoryNodesBefore。
+ *
+ * ⚠️ 完好性(intact):一个压缩节点的某个 childId 指向的叶子若已失效(翻页到别的 swipe →
+ * leafValid=false → 不在 byId 里),则该节点**不完整**,不能作为整体代表注入(它的压缩文本
+ * 嵌着失效那页的旧叙事,会与当前正文冲突)。此时降级递归,改用它**仍完好的子节点**各自代表:
+ * 受影响的那条链一路拆到叶子层、跳过失效叶子,而旁支完好的子节点(如同层另一条 L1)整条保留。
+ * 节点失活只是「当前不展示/不注入」,森林数据不删除——翻回原页 leafValid 恢复,即自动复活。
  */
 function selectNodes(
   summaries: MemSummary[],
   chat: STMessage[] | null,
   leafEligible: (n: ViewNode) => boolean,
 ): ViewNode[] {
-  const { byId, roots } = buildView(summaries, chat);
-
-  const collectLeaves = (n: ViewNode, acc: ViewNode[]): void => {
-    if (n.kind === 'leaf') {
-      acc.push(n);
-      return;
-    }
-    for (const cid of n.childIds) {
-      const c = byId.get(cid);
-      if (c) collectLeaves(c, acc);
-    }
-  };
-  const allDescEligible = (n: ViewNode): boolean => {
-    const ls: ViewNode[] = [];
-    collectLeaves(n, ls);
-    return ls.length > 0 && ls.every(leafEligible);
-  };
-
-  const chosen: ViewNode[] = [];
-  const visit = (n: ViewNode): void => {
-    if (n.kind === 'leaf') {
-      if (leafEligible(n)) chosen.push(n);
-      return;
-    }
-    if (allDescEligible(n)) {
-      chosen.push(n);
-      return;
-    }
-    for (const cid of n.childIds) {
-      const c = byId.get(cid);
-      if (c) visit(c);
-    }
-  };
-  for (const r of roots) visit(r);
-
-  // 时间序拼接:叶子用楼层序;压缩节点用其最早后代叶子的楼层序
-  const sortKey = (n: ViewNode): number => {
-    if (n.kind === 'leaf') return n.msgIndex;
-    const ls: ViewNode[] = [];
-    collectLeaves(n, ls);
-    return ls.length ? Math.min(...ls.map(l => l.msgIndex)) : Number.MAX_SAFE_INTEGER;
-  };
-  return chosen.sort((a, b) => sortKey(a) - sortKey(b));
+  return selectViewNodes(buildView(summaries, chat), leafEligible);
 }
 
 /**

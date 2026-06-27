@@ -3,7 +3,7 @@ import Icon from '@/components/Icon.vue';
 import { appendOpToLatestLeaf, deleteLeafAt, deleteSummary, editLeafAt, editPlan, editSummary } from '@/memory/apply';
 import { apiSettings } from '@/api/settings';
 import { engineState, resummarizeNow, summarizeFloor } from '@/memory/engine';
-import { refreshInjection } from '@/memory/inject';
+import { refreshInjection, selectViewNodes, type ViewNode } from '@/memory/inject';
 import { compactTimeLabel, formatRange, splitTimeLabel } from '@/memory/timeTag';
 import { relativeTimeLabel } from '@/memory/timeRel';
 import { derivedMeta, memory, recomputeDerived } from '@/memory/store';
@@ -160,39 +160,15 @@ interface Row {
   stale?: boolean; // leaf
 }
 
-// 森林:压缩节点 id → 节点。childIds 可指向叶子 id(L1)或下层压缩节点 id(L2+)。
-const compById = computed(() => {
-  const m = new Map<string, (typeof memory.summaries)[number]>();
-  for (const s of memory.summaries) m.set(s.id, s);
-  return m;
-});
-// 被任何压缩节点收纳的 id(叶子或下层节点)→ 即「已被总结」,列表里隐藏,只留森林的根。
-const summarizedIds = computed(() => {
-  const s = new Set<string>();
-  for (const c of memory.summaries) for (const cid of c.childIds) s.add(cid);
-  return s;
-});
-// 递归把一个节点(叶子或压缩节点)解析成它覆盖的所有叶子楼层号。
-function collectFloors(id: string, acc: number[], seen: Set<string>): void {
-  if (seen.has(id)) return;
-  seen.add(id);
-  const leafIdx = leafFloor.value.get(id);
-  if (leafIdx !== undefined) {
-    acc.push(leafIdx);
-    return;
-  }
-  const comp = compById.value.get(id);
-  if (!comp) return;
-  for (const c of comp.childIds) collectFloors(c, acc, seen);
-}
-
 const ordered = computed<Row[]>(() => {
-  const rows: Row[] = [];
-  // 叶子:跳过已被总结的(被某压缩节点收纳)——它们由对应总结代表
+  // 从 derivedMeta(reactive)构建 ViewNode 森林,复用注入侧同一套「最小拆解」选择。
+  // ⚠️ 必须走 derivedMeta 而非直接扫 chat:chat 非 reactive,UI 要变更须经 derivedMeta。
+  // 只收**有效**叶子(stale=false);失效叶子(翻页到别页等)落入「未摘要楼层」列表,不在此展示。
+  const byId = new Map<string, ViewNode>();
   for (const l of derivedMeta.leaves) {
-    if (summarizedIds.value.has(l.id)) continue;
-    rows.push({
-      key: `leaf:${l.id}`,
+    if (l.stale) continue;
+    byId.set(l.id, {
+      id: l.id,
       kind: 'leaf',
       level: 0,
       text: l.text,
@@ -200,33 +176,86 @@ const ordered = computed<Row[]>(() => {
       timeEnd: l.timeEnd,
       timeLabel: l.timeLabel,
       createdAt: l.createdAt,
-      sortKey: l.msgIndex,
-      floorLo: l.msgIndex,
-      floorHi: l.msgIndex,
+      childIds: [],
       msgIndex: l.msgIndex,
-      stale: l.stale,
+      active: l.active,
     });
   }
-  // 压缩节点:只显示根(未被上层收纳的);楼层范围 = 覆盖的全部叶子楼层 min..max
   for (const s of memory.summaries) {
-    if (summarizedIds.value.has(s.id)) continue;
-    const floors: number[] = [];
-    collectFloors(s.id, floors, new Set());
-    const lo = floors.length ? Math.min(...floors) : -1;
-    const hi = floors.length ? Math.max(...floors) : -1;
-    rows.push({
-      key: `comp:${s.id}`,
+    byId.set(s.id, {
+      id: s.id,
       kind: 'comp',
       level: s.level,
       text: s.text,
+      timeStart: s.timeStart,
+      timeEnd: s.timeEnd,
       timeLabel: s.timeLabel,
       createdAt: s.createdAt,
+      childIds: s.childIds ?? [],
+      msgIndex: -1,
+      active: false,
+    });
+  }
+  const referenced = new Set<string>();
+  for (const s of memory.summaries) for (const c of s.childIds ?? []) referenced.add(c);
+  const roots = [...byId.values()].filter(n => !referenced.has(n.id));
+
+  // 列表展示所有有效叶子的代表(leafEligible 恒真——失效叶子已在上面排除)。
+  // 含失效后代叶子的压缩节点不完整 → 自动降级,只拆受影响的那条链:
+  // 旁支完好的同层 L1 整条保留,失效那条拆成成员叶子(失效叶子本身不在此、已落未摘列表)。
+  const chosen = selectViewNodes({ byId, roots }, () => true);
+
+  // comp 的覆盖楼层范围 = 它后代有效叶子的 msgIndex min..max
+  const collectLeafFloors = (n: ViewNode, acc: number[], seen: Set<string>): void => {
+    if (seen.has(n.id)) return;
+    seen.add(n.id);
+    if (n.kind === 'leaf') {
+      acc.push(n.msgIndex);
+      return;
+    }
+    for (const cid of n.childIds) {
+      const c = byId.get(cid);
+      if (c) collectLeafFloors(c, acc, seen);
+    }
+  };
+
+  const rows: Row[] = chosen.map(n => {
+    if (n.kind === 'leaf') {
+      return {
+        key: `leaf:${n.id}`,
+        kind: 'leaf',
+        level: 0,
+        text: n.text,
+        timeStart: n.timeStart,
+        timeEnd: n.timeEnd,
+        timeLabel: n.timeLabel,
+        createdAt: n.createdAt,
+        sortKey: n.msgIndex,
+        floorLo: n.msgIndex,
+        floorHi: n.msgIndex,
+        msgIndex: n.msgIndex,
+        stale: false,
+      };
+    }
+    const floors: number[] = [];
+    collectLeafFloors(n, floors, new Set());
+    const lo = floors.length ? Math.min(...floors) : -1;
+    const hi = floors.length ? Math.max(...floors) : -1;
+    return {
+      key: `comp:${n.id}`,
+      kind: 'comp',
+      level: n.level,
+      text: n.text,
+      timeStart: n.timeStart,
+      timeEnd: n.timeEnd,
+      timeLabel: n.timeLabel,
+      createdAt: n.createdAt,
       // 排序用覆盖范围上界(最新楼层),与叶子楼层同尺度,倒序时落在对应位置
       sortKey: hi,
       floorLo: lo,
       floorHi: hi,
-    });
-  }
+    };
+  });
   // 倒序:楼层越靠后越在上面
   return rows.sort((a, b) => b.sortKey - a.sortKey);
 });

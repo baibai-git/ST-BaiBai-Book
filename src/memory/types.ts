@@ -95,6 +95,13 @@ export interface LeafExtra {
   timeLabel?: string;
   /** 生成时刻(UI 展示与 tie-break;真实重放顺序以楼层物理顺序为准) */
   createdAt: number;
+  /**
+   * 生成本叶子时所在的 swipe 页码(= 当时 message.swipe_id)。
+   * 用于判定叶子归属:ST 生成新 swipe 时会 structuredClone 旧 extra(含 bbs_leaf),
+   * 把上一页的叶子复制进新页;靠「叶子记录的页码 ≠ 当前 swipe_id」识别这种串页并失效。
+   * 缺省(旧数据/迁移)按第一页(0)处理。
+   */
+  swipe?: number;
   /** 旧字段:hash(清洗后的 mes)。已废弃(叶子有效性改为楼层/结构匹配,不再比对正文);仅旧数据残留 */
   srcHash?: string;
   /** 叶子结构版本 */

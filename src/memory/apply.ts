@@ -61,16 +61,35 @@ export function getLeaf(m: STMessage | undefined): LeafExtra | undefined {
   return m?.extra?.bbs_leaf as LeafExtra | undefined;
 }
 
+/** 叶子结构是否完整(有 id + delta)。不校验页码归属;供 pruneBrokenComps 判「叶子是否物理存在」。 */
+export function leafIntact(m: STMessage | undefined): boolean {
+  const leaf = getLeaf(m);
+  return !!(leaf && leaf.id && leaf.delta);
+}
+
+/** 叶子记录的页码(缺省按第一页 0);消息当前页码同口径(swipe_id 缺省 0)。 */
+function leafSwipe(leaf: LeafExtra): number {
+  return typeof leaf.swipe === 'number' ? leaf.swipe : 0;
+}
+function msgSwipe(m: STMessage): number {
+  return typeof m.swipe_id === 'number' ? m.swipe_id : 0;
+}
+
 /**
- * 叶子是否有效:挂在该楼且结构完整(有 id + delta)即有效。
+ * 叶子是否对「当前显示的这一页」有效:结构完整 + 页码归属当前 swipe。
  *
- * ⚠️ 不再比对正文哈希(旧 srcHash 机制已废):用户手动改正文(改错字、润色)是常见操作,
- * 不该因此让整条结构化记忆失效。代价:编辑正文后不会自动重摘,该楼沿用旧叶子的结构化数据;
- * 需要时手动删叶子(deleteLeafAt)再重摘。叶子存在 message.extra 上,天然随楼层/ swipe 跟随。
+ * 页码校验解决多页串扰:ST 生成新 swipe 时 structuredClone 旧 extra,会把上一页的 bbs_leaf
+ * 复制进新页;靠「叶子 swipe ≠ 当前 swipe_id」识别并失效——翻到没摘过的页正确显示「缺摘要」,
+ * 翻回原页页码又匹配、摘要恢复。叶子数据始终留在各自 swipe 的 extra 里,不删除。
+ *
+ * ⚠️ 不比对正文哈希:改正文(错字/润色)不改 swipe_id,故不会因此失效——这正是用页码而非
+ * srcHash 的好处。代价同前:编辑正文不自动重摘,沿用旧叶子;需要时手动删叶子再重摘。
  */
 export function leafValid(m: STMessage | undefined): boolean {
   const leaf = getLeaf(m);
-  return !!(leaf && leaf.id && leaf.delta);
+  if (!leaf || !leaf.id || !leaf.delta) return false;
+  if (!m) return false;
+  return leafSwipe(leaf) === msgSwipe(m);
 }
 
 /* ============ 重放引擎 ============ */
@@ -604,13 +623,17 @@ export function deleteSummary(id: string): boolean {
  * 祖先链整删:某叶子 id 不再有效(被删/陈旧/换新 id)时,凡是(递归)包含它的压缩节点全删。
  * 判定:一个压缩节点「完好」⟺ 它的每个 child 要么是现存有效叶子 id、要么是完好的压缩节点;
  * 否则「损坏」,删除。memoized DFS。删除后 saveMemory(若有变化)。
+ *
+ * ⚠️ 这里用 leafIntact 而非 leafValid:叶子「存活」只看物理存在(id+delta),**不看页码归属**。
+ * 翻页到没摘过的 swipe 时,被压缩进 L1 的叶子虽对当前页 leafValid=false,但它仍物理存在于
+ * 自己那一页的 extra 里(翻回去就显示)——绝不能因「当前不在这页」就删掉它所属的压缩链。
  */
 export function pruneBrokenComps(): boolean {
   const chat = getContext()?.chat ?? null;
   const liveLeafIds = new Set<string>();
   if (chat) {
     for (const m of chat) {
-      if (leafValid(m)) liveLeafIds.add(getLeaf(m)!.id);
+      if (leafIntact(m)) liveLeafIds.add(getLeaf(m)!.id);
     }
   }
   const byId = new Map(memory.summaries.map(s => [s.id, s]));

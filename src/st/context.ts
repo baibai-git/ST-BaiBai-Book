@@ -10,6 +10,8 @@ export interface STMessage {
   is_system: boolean;
   mes: string;
   send_date?: string;
+  /** 当前显示的 swipe 页码(多页 AI 回复时)。单页/无 swipe 时可能为 undefined,按 0 处理 */
+  swipe_id?: number;
   /** 消息私有数据。柏宝书在这里存 bbs_hidden(隐藏标记) 与 bbs_leaf(叶子摘要) */
   extra?: Record<string, unknown> & { bbs_leaf?: import('@/memory/types').LeafExtra; bbs_hidden?: boolean };
 }
