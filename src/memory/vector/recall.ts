@@ -20,18 +20,21 @@ import { getLeaf, leafValid } from '../apply';
 import { embedTexts, encodeFloat32Base64, rerankDocuments } from './embed';
 import { rewriteQuery } from './rewrite';
 import { ensureRecallIndex } from './index';
-import { currentChatScope, currentVectorDb, recallScopes } from './scope';
+import { currentChatId, currentChatScope, currentVectorDb, recallScopes } from './scope';
 import { resolveKeepStart } from '../engine';
 import { compactTimeLabel, latestStoryTime, splitTimeLabel } from '../timeTag';
 import { relativeTimeLabel } from '../timeRel';
 import {
   previewOf,
   resetRecallDebug,
+  restoreRecallDebug,
   setRecallEmbedding,
   setRecallInjected,
   setRecallRerank,
   setRecallRewrite,
   setRecallStatus,
+  snapshotRecallDebug,
+  type RecallDebug,
   type RecallDebugRerankHit,
 } from './debug';
 
@@ -62,6 +65,77 @@ function windowLeafIds(chat: STMessage[]): string[] {
     if (leafValid(chat[i])) ids.push(getLeaf(chat[i])!.id);
   }
   return ids;
+}
+
+/** 轻量稳定 hash(FNV-1a,16 进制),与 index.ts 同口径。用于缓存 key 的内容指纹。 */
+function fnv1a(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+/**
+ * 召回结果缓存:重新生成 / 翻页(swipe)时召回输入一字不变,直接复用上次结果,
+ * 省掉重写+embed+search+rerank 的额度与时间。只存「最近一次」一条,key 不匹配即覆盖。
+ *
+ * key = chatId | 最新user楼层号 | hash(最新user文本) | hash(上一条AI文本) | 召回参数指纹
+ *  - 带 user 文本 hash:编辑最新输入后重生成,楼层号没变但内容变了,靠它失效(否则错误复用)。
+ *  - 带 AI 文本 hash:编辑上一条 AI 楼后重生成,靠它失效。
+ *  - 带召回参数指纹:rerank/embedding 阈值、条数等任一改动则失效;只改别的设置(渠道/开关)不失效。
+ *  - 带 chatId:换聊天后楼层号/哈希偶然相同也不跨聊天误命中。
+ */
+interface RecallCache {
+  key: string;
+  text: string;
+  debug: RecallDebug;
+}
+let recallCache: RecallCache | null = null;
+
+/** 召回参数指纹:覆盖全部影响最终注入文本的档位参数(注入深度是常量,不计)。 */
+function recallParamFingerprint(cfg: typeof apiSettings.vector.recall): string {
+  return [
+    cfg.rerankCandidates,
+    cfg.embeddingThreshold,
+    cfg.rerankThreshold,
+    cfg.fullTextCount,
+    cfg.finalRecallCount,
+  ].join(',');
+}
+
+/**
+ * 构造当前轮的缓存 key。取「最新 user 楼层」需从后往前扫第一条 is_user——
+ * 重生成时末尾可能是待替换的 AI 楼/系统楼,直接取 chat[length-1] 会取错。
+ * 上一条 AI 文本 = 该 user 楼**之前**第一条非 user 楼(没有则空)。
+ * ⚠️ 不能取 user 之后那条:swipe 时那正是被重生成、内容每次都变的当前 AI 楼,
+ *    取了它缓存永不命中、白做。取 user 之前的稳定 AI 楼才对。
+ * 缺 chatId 或无 user 楼 → 返回 null,本轮不走缓存(照常实算)。
+ */
+function buildRecallCacheKey(chat: STMessage[], cfg: typeof apiSettings.vector.recall): string | null {
+  const chatId = currentChatId();
+  if (!chatId) return null;
+
+  let userIdx = -1;
+  for (let i = chat.length - 1; i >= 0; i--) {
+    if (chat[i]?.is_user) {
+      userIdx = i;
+      break;
+    }
+  }
+  if (userIdx < 0) return null;
+
+  const userText = chat[userIdx]?.mes ?? '';
+  let aiText = '';
+  for (let i = userIdx - 1; i >= 0; i--) {
+    if (!chat[i]?.is_user) {
+      aiText = chat[i]?.mes ?? '';
+      break;
+    }
+  }
+
+  return `${chatId}|${userIdx}|${fnv1a(userText)}|${fnv1a(aiText)}|${recallParamFingerprint(cfg)}`;
 }
 
 let recalling = false;
@@ -104,6 +178,15 @@ export async function runVectorRecall(signal?: AbortSignal): Promise<void> {
 
   const cfg = apiSettings.vector.recall;
   const scopes = recallScopes();
+
+  // 缓存命中(重生成/翻页且召回输入未变):直接复用上次注入文本 + 调试快照,跳过整条管线。
+  const cacheKey = buildRecallCacheKey(chat, cfg);
+  if (cacheKey && recallCache && recallCache.key === cacheKey) {
+    fn(RECALL_INJECT_KEY, recallCache.text, IN_CHAT, RECALL_INJECT_DEPTH, false, ROLE_SYSTEM, null);
+    restoreRecallDebug(recallCache.debug);
+    setRecallStatus(`${recallCache.debug.status}(复用缓存)`);
+    return;
+  }
 
   recalling = true;
   try {
@@ -162,6 +245,8 @@ export async function runVectorRecall(signal?: AbortSignal): Promise<void> {
     fn(RECALL_INJECT_KEY, text, IN_CHAT, RECALL_INJECT_DEPTH, false, ROLE_SYSTEM, null);
     setRecallInjected(text);
     setRecallStatus(text ? '召回完成' : '召回完成:无内容达标,本回合未注入');
+    // 实算成功才落缓存(失败/降级路径不缓存,下次重试)。存调试快照供命中时还原面板。
+    if (cacheKey) recallCache = { key: cacheKey, text, debug: snapshotRecallDebug() };
   } catch (e) {
     console.warn('[柏宝书向量] 召回失败(降级为不召回):', e);
     setRecallStatus(`失败:${e instanceof Error ? e.message : String(e)}`);

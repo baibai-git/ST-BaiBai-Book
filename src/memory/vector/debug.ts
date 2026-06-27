@@ -88,3 +88,13 @@ export function setRecallRerank(hits: RecallDebugRerankHit[]): void {
 export function setRecallInjected(text: string): void {
   recallDebug.injectedText = text;
 }
+
+/** 快照当前调试结果(深拷贝),供召回缓存留存,命中时再 restore 回面板。 */
+export function snapshotRecallDebug(): RecallDebug {
+  return JSON.parse(JSON.stringify(recallDebug));
+}
+
+/** 把缓存的调试快照还原到面板(命中缓存时用,免得 reset 后面板空白)。 */
+export function restoreRecallDebug(snap: RecallDebug): void {
+  Object.assign(recallDebug, snap);
+}
