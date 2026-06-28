@@ -15,7 +15,7 @@ import { getContext } from '@/st/context';
  * 本地版本号:直接写死在代码里(发版时与 manifest.json 的 version 一并改)。
  * 比 fetch 本地 manifest 省一次请求、无路径/缓存坑;更新装上新版后这串自然变大,下次比对即不再提示。
  */
-const CURRENT_VERSION = '0.1';
+const CURRENT_VERSION = '0.2';
 
 /** 远端 manifest:GitHub raw(带时间戳绕缓存)。homePage 指向 baibai-git/ST-BaiBai-Book。 */
 const REMOTE_MANIFEST_URL = 'https://raw.githubusercontent.com/baibai-git/ST-BaiBai-Book/main/manifest.json';

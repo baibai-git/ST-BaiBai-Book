@@ -261,14 +261,18 @@ function normalize(raw: unknown): ApiSettings {
   return merged;
 }
 
-/** 把用户输入规整成合法标签名:剥掉尖括号/斜杠/空白,只保留标签名允许的字符。 */
+/**
+ * 把用户输入规整成可安全拼进正则的标签名。
+ * 用黑名单(而非白名单)剔除会破坏标签语法/正则的危险字符:尖括号、斜杠、空白、正则元字符;
+ * 中文及其它 unicode 字母一律保留(用户可能写 <雪><状态栏> 这类中文标签)。
+ */
 export function sanitizeTagName(raw: string): string {
   return String(raw ?? '')
     .trim()
     .replace(/^<\/?/, '') // 开头的 < 或 </
     .replace(/>$/, '') // 结尾的 >
     .trim()
-    .replace(/[^A-Za-z0-9_:-]/g, ''); // 标签名合法字符:字母数字 _ : -
+    .replace(/[<>/\\\s.*+?^${}()|[\]]/g, ''); // 剔除尖括号/斜杠/空白/正则元字符,中文等保留
 }
 
 /** 补全单个向量端点的字段并校验类型(缺失/类型不符回退空串)。 */
