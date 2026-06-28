@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import Collapsible from '@/components/Collapsible.vue';
+import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import Icon from '@/components/Icon.vue';
 import { fetchModels, testChannel } from '@/api/client';
 import { apiSettings, newChannel, resolveVectorModel, type ApiChannel } from '@/api/settings';
@@ -20,6 +21,7 @@ import { resetVectorStoreProbe, vectorBackendKind } from '@/memory/vector/store'
 import { checkForUpdate, performUpdate, updateState } from '@/memory/update';
 import { recallDebug } from '@/memory/vector/debug';
 import { computeCarryoverPlan, createNewChatWithCarryover, type CarryoverPlan } from '@/memory/carryover';
+import { computeMigrationPlan, runHoraeMigration, type MigrationPlan } from '@/memory/migrate';
 import { ui, THEMES, type NavPosition } from '@/state/ui';
 import { computed, nextTick, onMounted, ref } from 'vue';
 
@@ -103,9 +105,6 @@ function confirmChannel() {
 const confirmDeleteOpen = ref(false);
 function askRemoveChannel() {
   confirmDeleteOpen.value = true;
-}
-function cancelRemoveChannel() {
-  confirmDeleteOpen.value = false;
 }
 function confirmRemoveChannel() {
   confirmDeleteOpen.value = false;
@@ -400,11 +399,11 @@ async function doClearIndex() {
 /* —— 带数据创建新对话 —— */
 const carrying = ref(false);
 const carryMsg = ref('');
+const carryConfirmOpen = ref(false);
 // 携带计划:展开面板时实时算(纯读 chat,不缓存,避免切聊天后过期)
 const carryPlan = computed<CarryoverPlan>(() => computeCarryoverPlan());
-async function doCarryover() {
-  if (carrying.value) return;
-  if (!confirm('将基于当前聊天创建一个带数据的新对话并切入。继续吗?')) return;
+async function runCarryover() {
+  carryConfirmOpen.value = false;
   carrying.value = true;
   carryMsg.value = '';
   try {
@@ -414,6 +413,32 @@ async function doCarryover() {
     carryMsg.value = `创建失败:${e instanceof Error ? e.message : String(e)}`;
   } finally {
     carrying.value = false;
+  }
+}
+
+/* —— 从旧版 Horae 迁移 —— */
+const migrating = ref(false);
+const migrateMsg = ref('');
+const migrateConfirmOpen = ref(false);
+// 迁移计划:展开面板时实时算(纯读当前 chat 的 horae_meta,不缓存)
+const migratePlan = computed<MigrationPlan>(() => computeMigrationPlan());
+// 确认文案随「是否覆盖」变化
+const migrateConfirmText = computed(() =>
+  migratePlan.value.willOverwrite
+    ? '当前聊天已有柏宝书数据,迁移会覆盖现有摘要并在各楼写入数据。继续吗?'
+    : '将把当前聊天里的 Horae 旧数据迁移成柏宝书记忆。继续吗?',
+);
+async function runMigrate() {
+  migrateConfirmOpen.value = false;
+  migrating.value = true;
+  migrateMsg.value = '';
+  try {
+    const ok = await runHoraeMigration();
+    migrateMsg.value = ok ? '迁移完成。' : '迁移未完成(详见提示)。';
+  } catch (e) {
+    migrateMsg.value = `迁移失败:${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    migrating.value = false;
   }
 }
 
@@ -1023,13 +1048,55 @@ function scorePct(score: number): number {
           class="bbs-btn bbs-btn-sm bbs-btn-primary"
           type="button"
           :disabled="carrying || !carryPlan?.hasData"
-          @click="doCarryover"
+          @click="carryConfirmOpen = true"
         >
           {{ carrying ? '创建中…' : '带数据创建新对话' }}
         </button>
         <p v-if="carryMsg" class="bbs-field-hint">{{ carryMsg }}</p>
       </Collapsible>
+
+      <!-- 从旧版 Horae 迁移 -->
+      <Collapsible title="从旧版 Horae 迁移" :open="false">
+        <p class="bbs-field-hint">
+          把当前聊天里旧版 Horae 的摘要、物品、计划迁移过来。需要迁移的聊天各点一次,不会动 Horae 原数据。
+        </p>
+        <div v-if="migratePlan" class="bbs-field-hint">
+          <template v-if="migratePlan.hasData">
+            检测到:可建摘要 {{ migratePlan.leafFloors }} 层 / 旧总结 {{ migratePlan.summaryCount }} 条 /
+            物品 {{ migratePlan.itemCount }} / 计划悬念 {{ migratePlan.planCount }}。
+            <span v-if="migratePlan.willOverwrite">⚠️ 当前聊天已有本插件数据,迁移将覆盖。</span>
+          </template>
+          <template v-else>未在当前聊天检测到 Horae 旧数据(请先进入含旧数据的聊天)。</template>
+        </div>
+        <button
+          class="bbs-btn bbs-btn-sm bbs-btn-primary"
+          type="button"
+          :disabled="migrating || !migratePlan?.hasData"
+          @click="migrateConfirmOpen = true"
+        >
+          {{ migrating ? '迁移中…' : '迁移当前聊天的 Horae 数据' }}
+        </button>
+        <p v-if="migrateMsg" class="bbs-field-hint">{{ migrateMsg }}</p>
+      </Collapsible>
     </div>
+
+    <!-- 带数据创建新对话 / Horae 迁移 的确认弹窗 -->
+    <ConfirmDialog
+      v-model:open="carryConfirmOpen"
+      title="带数据创建新对话"
+      confirm-text="创建并切入"
+      @confirm="runCarryover"
+    >
+      将基于当前聊天创建一个带数据的新对话并切入。继续吗?
+    </ConfirmDialog>
+    <ConfirmDialog
+      v-model:open="migrateConfirmOpen"
+      title="从旧版 Horae 迁移"
+      confirm-text="开始迁移"
+      @confirm="runMigrate"
+    >
+      {{ migrateConfirmText }}
+    </ConfirmDialog>
 
     <!-- ===== 渠道编辑弹窗 ===== -->
     <div v-if="editingChannel" class="bbs-modal-mask" @click.self="closeChannel">
@@ -1147,23 +1214,17 @@ function scorePct(score: number): number {
       </div>
 
       <!-- 删除渠道二次确认:叠在渠道弹窗之上 -->
-      <div v-if="confirmDeleteOpen" class="bbs-modal-mask bbs-modal-mask-top" @click.self="cancelRemoveChannel">
-        <div class="bbs-modal bbs-modal-confirm" role="dialog" aria-modal="true" aria-label="确认删除渠道">
-          <header class="bbs-modal-head">
-            <span class="bbs-modal-title">删除渠道</span>
-          </header>
-          <p class="bbs-confirm-text">
-            确定删除渠道「{{ editingChannel.name || '未命名渠道' }}」吗?此操作不可撤销,已指派该渠道的任务会被清空。
-          </p>
-          <footer class="bbs-modal-foot">
-            <span class="bbs-modal-foot-spacer"></span>
-            <button class="bbs-btn" type="button" @click="cancelRemoveChannel">取消</button>
-            <button class="bbs-btn bbs-btn-danger" type="button" @click="confirmRemoveChannel">
-              <Icon name="trash" /> 删除
-            </button>
-          </footer>
-        </div>
-      </div>
+      <ConfirmDialog
+        v-model:open="confirmDeleteOpen"
+        title="删除渠道"
+        confirm-text="删除"
+        confirm-icon="trash"
+        tone="danger"
+        top-layer
+        @confirm="confirmRemoveChannel"
+      >
+        确定删除渠道「{{ editingChannel.name || '未命名渠道' }}」吗?此操作不可撤销,已指派该渠道的任务会被清空。
+      </ConfirmDialog>
     </div>
 
     <!-- ===== 提示词编辑弹窗 ===== -->
@@ -1249,24 +1310,17 @@ function scorePct(score: number): number {
     </div>
 
     <!-- ===== 更新确认弹窗 ===== -->
-    <div v-if="updateConfirmOpen" class="bbs-modal-mask" @click.self="updateConfirmOpen = false">
-      <div class="bbs-modal bbs-modal-confirm" role="dialog" aria-modal="true" aria-label="确认更新">
-        <header class="bbs-modal-head">
-          <span class="bbs-modal-title">发现新版本</span>
-        </header>
-        <p class="bbs-confirm-text">
-          当前版本 v{{ updateState.current || '—' }},最新版本 v{{ updateState.latest }}。<br />
-          现在更新吗?更新完成后会自动刷新页面生效。
-        </p>
-        <footer class="bbs-modal-foot">
-          <span class="bbs-modal-foot-spacer"></span>
-          <button class="bbs-btn" type="button" @click="updateConfirmOpen = false">取消</button>
-          <button class="bbs-btn bbs-btn-primary" type="button" :disabled="updateState.updating" @click="confirmUpdate">
-            {{ updateState.updating ? '更新中…' : '更新并刷新' }}
-          </button>
-        </footer>
-      </div>
-    </div>
+    <ConfirmDialog
+      v-model:open="updateConfirmOpen"
+      title="发现新版本"
+      confirm-text="更新并刷新"
+      busy-text="更新中…"
+      :busy="updateState.updating"
+      @confirm="confirmUpdate"
+    >
+      当前版本 v{{ updateState.current || '—' }},最新版本 v{{ updateState.latest }}。<br />
+      现在更新吗?更新完成后会自动刷新页面生效。
+    </ConfirmDialog>
   </section>
 </template>
 
@@ -1554,20 +1608,6 @@ function scorePct(score: number): number {
   color: var(--bbs-danger);
   border-color: var(--bbs-danger);
   background: var(--bbs-danger-soft);
-}
-
-/* 删除确认弹窗:叠在渠道弹窗之上(更高 z-index),窄一些 */
-.bbs-modal-mask-top {
-  z-index: 10002;
-}
-.bbs-modal-confirm {
-  max-width: 380px;
-}
-.bbs-confirm-text {
-  margin: 4px 0 0;
-  font-size: 13px;
-  line-height: 1.7;
-  color: var(--bbs-ink-soft);
 }
 
 .bbs-model-row {

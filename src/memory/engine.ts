@@ -286,6 +286,20 @@ async function afterSummaryHideAndInject(chat: STMessage[]): Promise<void> {
 }
 
 /**
+ * 对外的「检测一次隐藏」:按当前叶子覆盖情况同步滑动窗口隐藏 + 刷新注入。
+ * 供迁移等批量写入叶子后调用,复用摘要收尾同一套逻辑;守卫与摘要流程一致
+ * (引擎在此聊天不生效 / 自动摘要关闭则不隐藏,仅刷新注入)。
+ */
+export async function syncHiddenNow(): Promise<void> {
+  const chat = getContext()?.chat ?? [];
+  if (engineActiveHere() && apiSettings.autoSummaryEnabled) {
+    await afterSummaryHideAndInject(chat);
+  } else {
+    refreshInjection();
+  }
+}
+
+/**
  * 全量补摘:给所有「无有效叶子」的 AI 楼逐个生成摘要。
  * **仅供摘要页「立即摘要」按钮手动调用**——自动触发改用 maybeSummarizePrevAi(单楼增量)。
  */
