@@ -58,6 +58,26 @@ export interface ItemLogEntry {
 }
 
 /**
+ * 场景 / 地点(派生产物,不持久化)。
+ * 纯地理层级:地点 ∈ 上级区域,用确定性 id 串成嵌套树(删/陈旧叶子→delta 不重放→树自动回退)。
+ * id 确定性:`scene:${规范化路径,'/'分隔}`,故同一路径每次重放得同一 id、手动 op 可稳定引用。
+ * 改某级名字 = 换 id(用 remove 旧 + add 新表达,见 apply.renameScene)。
+ */
+export interface MemScene {
+  id: string;
+  /** 本级地名(路径最后一段原文) */
+  name: string;
+  /** 完整路径原文(由粗到细,如 ["王都","城西区","归雁客栈"]),用于展示与匹配 */
+  path: string[];
+  /** 父节点 id;根节点为空串 */
+  parentId: string;
+  /** 地点描述(简短客观) */
+  desc?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
  * 计划 / 悬念(派生产物,不持久化)。
  * id 确定性:`plan:${产生它的叶子id}#${在该叶子 add 数组里的序号}`。
  */
@@ -153,6 +173,8 @@ export interface BaibaiMemory {
   items: MemItem[];
   /** 派生缓存 */
   plans: MemPlan[];
+  /** 派生缓存:走过的地点(地理嵌套树,从叶子 delta 重放) */
+  scenes: MemScene[];
   /** 派生缓存:近期物品变动日志(重放时产出,只留最近若干条) */
   itemLog: ItemLogEntry[];
   /** 真源:叶子摘要森林 */
@@ -165,6 +187,7 @@ export function createEmptyMemory(): BaibaiMemory {
     state: { time: '', location: '' },
     items: [],
     plans: [],
+    scenes: [],
     itemLog: [],
     summaries: [],
   };
@@ -181,6 +204,27 @@ export interface ItemDelta {
   carried?: boolean;
   /** 非随身时的存放地点(故事内地名) */
   location?: string;
+}
+
+/** 场景指令里单个地点的形状(AI / 手动共用) */
+export interface SceneDelta {
+  /** 完整地理路径,由粗到细(如 ["王都","城西区","归雁客栈"]) */
+  path: string[];
+  /** 地点描述(必填:写不出有意义描述的地点不记;重放时丢弃空描述节点) */
+  desc?: string;
+}
+
+/**
+ * 重设父级指令:把已存在的 node(及其整棵子树)平移到 newPath。
+ * 覆盖三种情形(都是同一操作):给顶级加父、在已有父子间插入中间节点、改换父级。
+ *  - node:该节点**当前**的完整路径(由粗到细)。
+ *  - newPath:它应在的**新**完整路径(末段通常与 node 末段同名)。
+ *  - descs:newPath 上新建/需补描述的层级,键=该级地名,值=描述(desc 必填原则的延伸)。
+ */
+export interface SceneReparent {
+  node: string[];
+  newPath: string[];
+  descs?: Record<string, string>;
 }
 
 /** AI 摘要返回的完整 JSON(协议保持不变:AI 只产 add/update/remove/resolve) */
@@ -203,6 +247,15 @@ export interface SummaryDelta {
     /** 按名字更新数量/描述 */
     update?: ItemDelta[];
   };
+  /** 指令型:场景/地点增改(逐级地理路径) */
+  scenes?: {
+    /** 新到达/新记录的地点;path 给完整地理路径,逐级 upsert */
+    add?: SceneDelta[];
+    /** 更新已有地点的描述 */
+    update?: SceneDelta[];
+    /** 重设父级:给已有节点加父 / 插入中间节点 / 换父(连子树平移) */
+    reparent?: SceneReparent[];
+  };
   /** 指令型:计划/悬念增删 */
   plans?: {
     /** createdTime/targetTime 由 AI 直接输出(故事内时间字符串);targetTime 允许模糊或省略 */
@@ -215,7 +268,7 @@ export interface SummaryDelta {
 /**
  * 固化进叶子的结构化增量。与 SummaryDelta 几乎一致,但两点不同:
  *  1. plans.resolve 存的是**稳定 plan id**(而非运行期短序号 p1/p2);
- *  2. 扩展了仅供「手动操作」用的内部 op:plans.remove / plans.reopen、items 沿用 remove。
+ *  2. 扩展了仅供「手动操作」用的内部 op:plans.remove / plans.reopen、items / scenes 沿用 remove。
  * AI 永远不产这些内部 op;它们只在 UI 手动改动时写入。
  */
 export interface StoredDelta {
@@ -226,6 +279,14 @@ export interface StoredDelta {
     update?: ItemDelta[];
     /** 按物品名移除(规范化匹配) */
     remove?: string[];
+  };
+  scenes?: {
+    add?: SceneDelta[];
+    update?: SceneDelta[];
+    /** 重设父级(连子树平移);AI 与手动共用 */
+    reparent?: SceneReparent[];
+    /** 内部/手动:按完整路径移除(连带删其后代) */
+    remove?: string[][];
   };
   plans?: {
     add?: { kind: 'plan' | 'suspense'; content: string; createdTime?: string; targetTime?: string }[];

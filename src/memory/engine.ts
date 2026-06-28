@@ -672,6 +672,7 @@ async function summarizeFloorWork(
     location: stateBefore.state.location,
     items: stateBefore.items.map(i => ({ name: i.name, qty: i.qty, desc: i.desc, carried: i.carried, location: i.location })),
     itemLog: stateBefore.itemLog,
+    scenes: stateBefore.scenes.map(s => ({ path: s.path, desc: s.desc })),
     openPlans: openPlansOrdered.map(p => ({ kind: p.kind, content: p.content, createdTime: p.createdTime, targetTime: p.targetTime })),
     history,
     content,

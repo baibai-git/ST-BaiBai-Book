@@ -19,7 +19,7 @@ import { memory } from './store';
 import { compactTimeLabel, formatRange, latestStoryTime, splitTimeLabel, timeTagPrompt } from './timeTag';
 import { relativeTimeLabel } from './timeRel';
 import { selectViewNodes, type ViewNode } from './select';
-import type { LeafExtra, MemSummary } from './types';
+import type { LeafExtra, MemScene, MemSummary } from './types';
 
 // 摘要页列表复用同一套选择逻辑,经此 re-export(纯算法在 select.ts,零依赖、可单测)
 export { selectViewNodes, type ViewNode };
@@ -194,13 +194,16 @@ function nodeEventTime(n: ViewNode): string {
  * 注入专用:在绝对时间前再加一个相对前缀(如【(昨天) 1988/9/29 21:30】),帮主模型感知时间距离。
  * 参照点 now = 故事内最新时间;无法解析相对差的(架空纪年等)降级为只显示绝对时间。
  * 不并入 renderHistoryNodes —— 那个被摘要模型上下文复用,不能带相对前缀(会污染且参照点不同)。
+ *
+ * ⚠️ 仅**叶子**(未压缩的单楼摘要)加相对前缀:它指向某一刻、相对距离有意义。
+ * 压缩节点(总结)跨多楼、本身就是一段时间范围,标个「(昨天)」反而误导主模型、易出错 —— 只给绝对时间。
  */
 function renderHistoryNodesWithRelative(nodes: ViewNode[], now: string): string {
   return nodes
     .map(n => {
       const t = nodeTime(n);
       if (!t) return n.text;
-      const rel = relativeTimeLabel(nodeEventTime(n), now);
+      const rel = n.kind === 'leaf' ? relativeTimeLabel(nodeEventTime(n), now) : '';
       return rel ? `【(${rel}) ${t}】${n.text}` : `【${t}】${n.text}`;
     })
     .join('\n\n');
@@ -229,17 +232,94 @@ function locationReachable(itemLoc: string | undefined, here: string): boolean {
   return a.includes(b) || b.includes(a);
 }
 
+/**
+ * 在场景树里按当前地点字符串定位「当前节点」:取名称/路径与 here 包含式匹配、且**路径最深**的节点。
+ * 找不到返回 null(退回纯字符串行为)。
+ */
+function findCurrentScene(scenes: MemScene[], here: string): MemScene | null {
+  const h = here.trim();
+  if (!h) return null;
+  let best: MemScene | null = null;
+  for (const s of scenes) {
+    // 匹配本级名或完整路径任一段(AI 可能写「归雁客栈」也可能写「城西区归雁客栈」)
+    const hit = locationReachable(s.name, h) || s.path.some(seg => locationReachable(seg, h));
+    if (hit && (!best || s.path.length > best.path.length)) best = s;
+  }
+  return best;
+}
+
+/** 回溯祖先链(由粗到细,含当前节点本身)。 */
+function sceneChain(scenes: MemScene[], node: MemScene | null): MemScene[] {
+  if (!node) return [];
+  const byId = new Map(scenes.map(s => [s.id, s]));
+  const chain: MemScene[] = [];
+  let cur: MemScene | undefined = node;
+  const seen = new Set<string>();
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    chain.unshift(cur);
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+  }
+  return chain;
+}
+
+/**
+ * 物品是否在「当前地点或其祖先链任一级」可达。
+ * 联动:当前在「归雁客栈二楼」,存放在「归雁客栈」(其祖先)的物品也算可达 → 随地点一起发。
+ * chain 为空(无场景数据)时退回纯字符串 locationReachable(here),保证旧数据不回归。
+ */
+function itemReachableInScene(itemLoc: string | undefined, here: string, chain: MemScene[]): boolean {
+  if (!chain.length) return locationReachable(itemLoc, here);
+  const a = (itemLoc ?? '').trim();
+  if (!a) return false;
+  return chain.some(n => locationReachable(itemLoc, n.name) || locationReachable(itemLoc, n.path.join('')));
+}
+
+/**
+ * 渲染场景注入块(分三档省 token):
+ *  - 当前地点 + 祖先链:逐级「名称(描述)」详细。
+ *  - 其他去过的地点:仅列名称(完整路径名),帮 AI 复用既有命名、避免重复记录。
+ * 无场景数据返回空串。
+ */
+function fmtSceneContext(scenes: MemScene[], here: string): string {
+  if (!scenes.length) return '';
+  const current = findCurrentScene(scenes, here);
+  const chain = sceneChain(scenes, current);
+  const chainIds = new Set(chain.map(s => s.id));
+
+  const lines: string[] = [];
+  if (chain.length) {
+    const detailed = chain
+      .map(n => (n.desc ? `${n.name}(${n.desc})` : n.name))
+      .join(' › ');
+    lines.push(`当前所在(由大到小):${detailed}`);
+  }
+  // 其他地点:仅名称(用完整路径表达层级),排除已在祖先链里详述的
+  const others = scenes
+    .filter(s => !chainIds.has(s.id))
+    .map(s => s.path.join(' › '));
+  if (others.length) {
+    lines.push(`其他已知地点(仅名称,勿重复记录):\n${others.map(o => `  - ${o}`).join('\n')}`);
+  }
+  return lines.join('\n');
+}
+
 /** 组合当前结构化状态注入文本;无有意义状态时返回空串。 */
 export function buildStateInjectionText(): string {
   const st: string[] = [];
   if (memory.state.time) st.push(`当前时间:${memory.state.time}`);
   if (memory.state.location) st.push(`当前地点:${memory.state.location}`);
 
-  // 物品分两组省 token:可达(随身 / 存放地匹配当前地点)发全量(名+量+描述);
-  // 他处寄存的只发名+数量(砍掉描述这个大头),既省 token 又不至于让主模型以为东西没了。
   const here = memory.state.location || '';
-  const reachable = memory.items.filter(i => i.carried !== false || locationReachable(i.location, here));
-  const elsewhere = memory.items.filter(i => !(i.carried !== false || locationReachable(i.location, here)));
+  // 场景树:当前地点 + 祖先链(详细) + 其他地点(仅名称)。祖先链同时用于物品可达判定。
+  const sceneBlock = fmtSceneContext(memory.scenes, here);
+  if (sceneBlock) st.push(`地点记忆:\n${sceneBlock}`);
+  const chain = sceneChain(memory.scenes, findCurrentScene(memory.scenes, here));
+
+  // 物品分两组省 token:可达(随身 / 存放地落在当前地点或其祖先链)发全量(名+量+描述);
+  // 他处寄存的只发名+数量(砍掉描述这个大头),既省 token 又不至于让主模型以为东西没了。
+  const reachable = memory.items.filter(i => i.carried !== false || itemReachableInScene(i.location, here, chain));
+  const elsewhere = memory.items.filter(i => !(i.carried !== false || itemReachableInScene(i.location, here, chain)));
   st.push(`物品清单:\n${fmtItems(reachable.map(i => ({ name: i.name, qty: i.qty, desc: i.desc, carried: i.carried, location: i.location })))}`);
   if (elsewhere.length) {
     // 仅名+数量,按地点括注;无描述
@@ -257,7 +337,7 @@ export function buildStateInjectionText(): string {
 
   // 状态块在有任何有意义内容时才注入(物品/计划即使空也会有「(无)」占位,
   // 但只要存在摘要或时间/地点就值得带上整块)
-  const hasState = memory.state.time || memory.state.location || memory.items.length || openPlans.length;
+  const hasState = memory.state.time || memory.state.location || memory.items.length || memory.scenes.length || openPlans.length;
   if (!hasState) return '';
   // 首尾私密简报框定,避免主模型把状态快照当成要复述/输出的模板(正文后跟吐一份状态)
   return `${MEMORY_BRIEFING_NOTE}\n[当前状态]\n${st.join('\n')}\n${MEMORY_BRIEFING_END}`;

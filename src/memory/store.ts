@@ -48,6 +48,7 @@ export function recomputeDerived(): void {
   memory.state.location = d.state.location;
   memory.items.splice(0, memory.items.length, ...d.items);
   memory.plans.splice(0, memory.plans.length, ...d.plans);
+  memory.scenes.splice(0, memory.scenes.length, ...d.scenes);
   memory.itemLog.splice(0, memory.itemLog.length, ...d.itemLog);
 
   // derivedMeta:扫 chat 收集叶子(含陈旧)
@@ -218,6 +219,13 @@ function mergeStoredDelta(a: StoredDelta, b: StoredDelta): void {
     if (b.items.add?.length) (ai.add ??= []).push(...b.items.add);
     if (b.items.update?.length) (ai.update ??= []).push(...b.items.update);
     if (b.items.remove?.length) (ai.remove ??= []).push(...b.items.remove);
+  }
+  if (b.scenes) {
+    const as = (a.scenes ??= {});
+    if (b.scenes.add?.length) (as.add ??= []).push(...b.scenes.add);
+    if (b.scenes.update?.length) (as.update ??= []).push(...b.scenes.update);
+    if (b.scenes.reparent?.length) (as.reparent ??= []).push(...b.scenes.reparent);
+    if (b.scenes.remove?.length) (as.remove ??= []).push(...b.scenes.remove);
   }
   if (b.plans) {
     const ap = (a.plans ??= {});

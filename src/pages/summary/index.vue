@@ -287,8 +287,9 @@ function rowTime(r: Row): string {
   if (r.timeStart || r.timeEnd) return formatRange(r.timeStart, r.timeEnd);
   return r.timeLabel ? compactTimeLabel(r.timeLabel) : '';
 }
-/** 行的相对时间前缀(如「昨天」):参照故事内最新时间;无法解析则空串 */
+/** 行的相对时间前缀(如「昨天」):仅叶子(单楼摘要)显示;总结跨多楼、相对时间无意义,返回空串 */
 function rowRelative(r: Row): string {
+  if (r.kind !== 'leaf') return '';
   const event = r.timeEnd || r.timeStart || (r.timeLabel ? splitTimeLabel(r.timeLabel).end : '') || '';
   return relativeTimeLabel(event, derivedMeta.latestStoryTime);
 }
@@ -649,38 +650,7 @@ function saveEdit() {
   flex-direction: column;
   gap: 4px;
 }
-.bbs-section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-/* —— 悬念簿 —— */
-/* 标题旁的小「+」:无框、muted,平时低调,hover 才浮现强调色 */
-.bbs-add-mini {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--bbs-radius-sm);
-  background: transparent;
-  color: var(--bbs-ink-muted);
-  font-size: 15px;
-  cursor: pointer;
-  transition: color 0.15s, background 0.15s;
-}
-.bbs-add-mini:hover:not(:disabled) {
-  color: var(--bbs-accent);
-  background: var(--bbs-surface-2);
-}
-.bbs-add-mini:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
+/* .bbs-section-head / .bbs-add-mini 已提升为 base.css 全局原子(摘要、场景共用) */
 .bbs-kind-toggle {
   display: inline-flex;
   flex: 0 0 auto;

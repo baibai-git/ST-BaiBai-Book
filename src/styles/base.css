@@ -149,6 +149,39 @@
   margin: var(--bbs-gap) 0;
 }
 
+/* —— 区块标题行 + 标题旁小「+」按钮:供各分页复用(摘要、场景…) —— */
+.bbs-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+/* 标题旁的小「+」:无框、muted,平时低调,hover 才浮现强调色 */
+.bbs-add-mini {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--bbs-radius-sm);
+  background: transparent;
+  color: var(--bbs-ink-muted);
+  font-size: 15px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.bbs-add-mini:hover:not(:disabled) {
+  color: var(--bbs-accent);
+  background: var(--bbs-surface-2);
+}
+.bbs-add-mini:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* —— 通用弹窗:供各分页复用(summary 编辑、settings 渠道编辑等)——
    不用 Teleport:内容须留在 shadow root 内才能拿到 scoped 样式与 --bbs-* 变量;
    .bbs-modal-mask 用 position:fixed 覆盖全窗,直接内联渲染即可。 */
