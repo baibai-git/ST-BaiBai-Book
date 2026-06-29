@@ -23,7 +23,7 @@ function onNavClick(id: string) {
 </script>
 
 <template>
-  <nav class="bbs-nav" :class="`is-${placement}`">
+  <nav class="bbs-nav" :class="[`is-${placement}`, { 'is-narrow': narrow }]">
     <button
       v-for="p in PAGES"
       :key="p.id"
@@ -40,8 +40,8 @@ function onNavClick(id: string) {
         <!-- 有可用更新:设置项亮红点角标 -->
         <span v-if="showUpdateDot(p.id)" class="bbs-nav-dot" aria-label="有可用更新"></span>
       </span>
-      <!-- 底部导航仅图标,顶部带文字 -->
-      <span v-if="placement === 'top'" class="bbs-nav-label">{{ p.label }}</span>
+      <!-- 顶部带文字;但窄屏(移动端)顶部也只放图标,否则一排带字胶囊横向放不下,会把后面的项挤出屏幕 -->
+      <span v-if="placement === 'top' && !narrow" class="bbs-nav-label">{{ p.label }}</span>
     </button>
   </nav>
 </template>
@@ -85,6 +85,34 @@ function onNavClick(id: string) {
 }
 .bbs-nav.is-top .bbs-nav-icon {
   font-size: 17px;
+}
+
+/* —— 顶部 + 窄屏(移动端):降级为仅图标,样式与底部导航完全一致(尺寸/配色/选中态),
+   仅位置在顶,免得带字胶囊横向溢出把后面的项挤出屏幕 —— */
+.bbs-nav.is-top.is-narrow {
+  justify-content: space-around;
+  gap: 0;
+  padding: 6px 6px;
+}
+.bbs-nav.is-top.is-narrow .bbs-nav-item {
+  flex: 1;
+  justify-content: center;
+  gap: 0;
+  padding: 10px 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--bbs-ink-muted);
+}
+.bbs-nav.is-top.is-narrow .bbs-nav-item:hover {
+  background: transparent;
+  color: var(--bbs-ink-muted);
+}
+.bbs-nav.is-top.is-narrow .bbs-nav-item.is-active {
+  background: transparent;
+  color: var(--bbs-accent);
+}
+.bbs-nav.is-top.is-narrow .bbs-nav-icon {
+  font-size: 23px;
 }
 
 /* —— 底部:仅图标,等分,触达区大 —— */

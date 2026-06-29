@@ -123,7 +123,7 @@ const windowStyle = computed(() => {
               </div>
             </header>
 
-            <NavBar v-if="navPlacement === 'top'" placement="top" />
+            <NavBar v-if="navPlacement === 'top'" placement="top" :narrow="narrowFlag" />
 
             <main class="bbs-body">
               <Transition name="bbs-page" mode="out-in">
