@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
-import { editNpc, removeNpc, setNpcFollow, upsertNpc } from '@/memory/apply';
+import { editNpc, removeNpc, setNpcFollow, setNpcImportant, upsertNpc } from '@/memory/apply';
 import { derivedMeta, memory } from '@/memory/store';
 import type { MemNpc, MemScene } from '@/memory/types';
 import { computed, nextTick, ref } from 'vue';
@@ -58,18 +58,16 @@ function onScene(npc: MemNpc): boolean {
   return reachableNames.value.some(n => match(loc, n));
 }
 
-// 分两组:在场(随行/所在地可达)与不在场。各自按创建序稳定排列。
+// 分三组:主要角色(置顶,不论在场)/ 在场(随行/所在地可达)/ 不在场。各组按创建序稳定排列。
+// 复刻注入端 fmtNpcContext 口径:important 单列,不再进在场/不在场判定 —— 确保所见即所发。
+const sortByCreated = (a: MemNpc, b: MemNpc) => a.createdAt - b.createdAt;
+const mains = computed(() => memory.npcs.filter(n => n.important).sort(sortByCreated));
 const present = computed(() =>
-  memory.npcs.filter(onScene).sort((a, b) => a.createdAt - b.createdAt),
+  memory.npcs.filter(n => !n.important && onScene(n)).sort(sortByCreated),
 );
 const absent = computed(() =>
-  memory.npcs.filter(n => !onScene(n)).sort((a, b) => a.createdAt - b.createdAt),
+  memory.npcs.filter(n => !n.important && !onScene(n)).sort(sortByCreated),
 );
-
-// 首字徽记:取名字第一个字符(中英皆可)作肖像替身
-function monogram(name: string): string {
-  return [...name.trim()][0] ?? '?';
-}
 
 /* —— 随行一键开关:随行→取消(留在当前地点);非随行→标记随行 —— */
 function toggleFollow(npc: MemNpc) {
@@ -79,6 +77,11 @@ function toggleFollow(npc: MemNpc) {
   } else {
     setNpcFollow(npc.name, true);
   }
+}
+
+/* —— 主要角色一键升/降 —— */
+function toggleImportant(npc: MemNpc) {
+  setNpcImportant(npc.name, !npc.important);
 }
 
 function askRemove(npc: MemNpc) {
@@ -93,11 +96,14 @@ interface NpcDraft {
   title: string;
   personality: string;
   desc: string;
+  outfit: string;
+  condition: string;
+  important: boolean;
   follow: boolean;
   location: string;
 }
 function emptyDraft(): NpcDraft {
-  return { name: '', title: '', personality: '', desc: '', follow: false, location: memory.state.location || '' };
+  return { name: '', title: '', personality: '', desc: '', outfit: '', condition: '', important: false, follow: false, location: memory.state.location || '' };
 }
 const draft = ref<NpcDraft>(emptyDraft());
 
@@ -118,6 +124,9 @@ function addNpc() {
     title: d.title,
     personality: d.personality,
     desc: d.desc,
+    outfit: d.outfit,
+    condition: d.condition,
+    important: d.important,
     follow: d.follow,
     location: d.follow ? '' : d.location,
   });
@@ -138,6 +147,9 @@ function openEdit(npc: MemNpc) {
     title: npc.title ?? '',
     personality: npc.personality ?? '',
     desc: npc.desc ?? '',
+    outfit: npc.outfit ?? '',
+    condition: npc.condition ?? '',
+    important: npc.important === true,
     follow: npc.follow === true,
     location: npc.location ?? '',
   };
@@ -153,6 +165,9 @@ function saveEdit() {
     title: e.title,
     personality: e.personality,
     desc: e.desc,
+    outfit: e.outfit,
+    condition: e.condition,
+    important: e.important,
     follow: e.follow,
     location: e.follow ? '' : e.location,
   });
@@ -185,6 +200,37 @@ function confirmRemove() {
     <hr class="bbs-rule" />
 
     <div v-if="memory.npcs.length" class="bbs-npc-groups">
+      <!-- 主要角色:核心主演,永远全量发送。这里突出「即时状态面板」(着装/状态/所在),弱化身份档案 -->
+      <div v-if="mains.length" class="bbs-npc-group">
+        <div class="bbs-npc-grouphead">
+          <span class="bbs-npc-grouptag is-main"><Icon name="star" />主要角色</span>
+          <span class="bbs-npc-grouphint">始终随剧情发送,重点维护当前状态</span>
+        </div>
+        <div class="bbs-npc-list">
+          <article v-for="n in mains" :key="n.id" class="bbs-npc is-present is-main">
+            <div class="bbs-npc-body">
+              <div class="bbs-npc-head">
+                <span class="bbs-npc-name">{{ n.name }}</span>
+                <span v-if="n.title" class="bbs-npc-flag">{{ n.title }}</span>
+                <span class="bbs-npc-acts">
+                  <button class="bbs-item-act bbs-npc-star active" type="button" title="主要角色 · 点击取消" @click="toggleImportant(n)"><Icon name="star" /></button>
+                  <button class="bbs-item-act" type="button" title="编辑" @click="openEdit(n)"><Icon name="edit" /></button>
+                  <button class="bbs-item-act bbs-item-del" type="button" title="删除" @click="askRemove(n)"><Icon name="trash" /></button>
+                </span>
+              </div>
+              <dl v-if="n.outfit || n.condition || n.follow || n.location" class="bbs-npc-fields">
+                <div v-if="n.outfit" class="bbs-npc-field f-outfit"><dt>着装</dt><dd>{{ n.outfit }}</dd></div>
+                <div v-if="n.condition" class="bbs-npc-field f-cond"><dt>状态</dt><dd>{{ n.condition }}</dd></div>
+                <div v-if="n.follow || n.location" class="bbs-npc-field f-loc">
+                  <dt>所在</dt><dd>{{ n.follow ? '随主角同行' : n.location }}</dd>
+                </div>
+              </dl>
+              <p v-else class="bbs-npc-mainhint">尚无状态记录 —— 编辑可补充当前着装 / 状态 / 所在。</p>
+            </div>
+          </article>
+        </div>
+      </div>
+
       <!-- 在场:随行 / 所在当前场景。全量信息发给 AI,这里也全量展示 -->
       <div v-if="present.length" class="bbs-npc-group">
         <div class="bbs-npc-grouphead">
@@ -192,13 +238,21 @@ function confirmRemove() {
           <span class="bbs-npc-grouphint">完整信息随剧情发送</span>
         </div>
         <div class="bbs-npc-list">
-          <article v-for="n in present" :key="n.id" class="bbs-npc is-present">
-            <span class="bbs-npc-disc" :class="{ 'is-follow': n.follow }">{{ monogram(n.name) }}</span>
+          <article v-for="n in present" :key="n.id" class="bbs-npc is-present" :class="{ 'is-follow': n.follow }">
             <div class="bbs-npc-body">
               <div class="bbs-npc-head">
                 <span class="bbs-npc-name">{{ n.name }}</span>
-                <span v-if="n.title" class="bbs-npc-title">{{ n.title }}</span>
+                <span v-if="n.follow" class="bbs-npc-flag is-follow"><Icon name="pin" />随行</span>
+                <span v-else-if="n.location" class="bbs-npc-flag"><Icon name="scenes" />{{ n.location }}</span>
                 <span class="bbs-npc-acts">
+                  <button
+                    class="bbs-item-act bbs-npc-star"
+                    type="button"
+                    title="标记为主要角色(始终全量发送、追踪状态)"
+                    @click="toggleImportant(n)"
+                  >
+                    <Icon name="star" />
+                  </button>
                   <button
                     class="bbs-item-act bbs-npc-pin"
                     :class="{ active: n.follow }"
@@ -212,12 +266,13 @@ function confirmRemove() {
                   <button class="bbs-item-act bbs-item-del" type="button" title="删除" @click="askRemove(n)"><Icon name="trash" /></button>
                 </span>
               </div>
-              <div class="bbs-npc-meta">
-                <span v-if="n.follow" class="bbs-npc-flag is-follow"><Icon name="pin" />随行</span>
-                <span v-else-if="n.location" class="bbs-npc-flag"><Icon name="scenes" />{{ n.location }}</span>
-              </div>
-              <p v-if="n.personality" class="bbs-npc-trait">{{ n.personality }}</p>
-              <p v-if="n.desc" class="bbs-npc-desc">{{ n.desc }}</p>
+              <dl v-if="n.title || n.personality || n.desc || n.outfit || n.condition" class="bbs-npc-fields">
+                <div v-if="n.title" class="bbs-npc-field f-title"><dt>身份</dt><dd>{{ n.title }}</dd></div>
+                <div v-if="n.outfit" class="bbs-npc-field f-outfit"><dt>着装</dt><dd>{{ n.outfit }}</dd></div>
+                <div v-if="n.condition" class="bbs-npc-field f-cond"><dt>状态</dt><dd>{{ n.condition }}</dd></div>
+                <div v-if="n.personality" class="bbs-npc-field f-trait"><dt>性格</dt><dd>{{ n.personality }}</dd></div>
+                <div v-if="n.desc" class="bbs-npc-field f-desc"><dt>外貌</dt><dd>{{ n.desc }}</dd></div>
+              </dl>
             </div>
           </article>
         </div>
@@ -231,12 +286,20 @@ function confirmRemove() {
         </div>
         <div class="bbs-npc-list">
           <article v-for="n in absent" :key="n.id" class="bbs-npc is-absent">
-            <span class="bbs-npc-disc">{{ monogram(n.name) }}</span>
             <div class="bbs-npc-body">
               <div class="bbs-npc-head">
                 <span class="bbs-npc-name">{{ n.name }}</span>
-                <span v-if="n.title" class="bbs-npc-title">{{ n.title }}</span>
+                <span v-if="n.location" class="bbs-npc-flag"><Icon name="scenes" />{{ n.location }}</span>
+                <span v-else class="bbs-npc-flag is-nowhere">所在不明</span>
                 <span class="bbs-npc-acts">
+                  <button
+                    class="bbs-item-act bbs-npc-star"
+                    type="button"
+                    title="标记为主要角色(始终全量发送、追踪状态)"
+                    @click="toggleImportant(n)"
+                  >
+                    <Icon name="star" />
+                  </button>
                   <button
                     class="bbs-item-act bbs-npc-pin"
                     type="button"
@@ -249,10 +312,9 @@ function confirmRemove() {
                   <button class="bbs-item-act bbs-item-del" type="button" title="删除" @click="askRemove(n)"><Icon name="trash" /></button>
                 </span>
               </div>
-              <div class="bbs-npc-meta">
-                <span v-if="n.location" class="bbs-npc-flag"><Icon name="scenes" />{{ n.location }}</span>
-                <span v-else class="bbs-npc-flag is-nowhere">所在不明</span>
-              </div>
+              <dl v-if="n.title" class="bbs-npc-fields">
+                <div class="bbs-npc-field f-title"><dt>身份</dt><dd>{{ n.title }}</dd></div>
+              </dl>
             </div>
           </article>
         </div>
@@ -284,8 +346,20 @@ function confirmRemove() {
           <input v-model="draft.personality" class="bbs-input" type="text" placeholder="如:沉默寡言、护短" />
         </label>
         <label class="bbs-modal-field">
-          <span class="bbs-modal-label">外貌描述</span>
-          <textarea v-model="draft.desc" class="bbs-input bbs-modal-textarea" rows="3" placeholder="可选"></textarea>
+          <span class="bbs-modal-label">外貌描述(固定特征:发色 / 身材 / 疤痕,勿写穿着)</span>
+          <textarea v-model="draft.desc" class="bbs-input bbs-modal-textarea" rows="2" placeholder="可选"></textarea>
+        </label>
+        <label class="bbs-modal-field">
+          <span class="bbs-modal-label">当前着装(会随剧情变化)</span>
+          <input v-model="draft.outfit" class="bbs-input" type="text" placeholder="如:红斗篷、佩长剑" />
+        </label>
+        <label class="bbs-modal-field">
+          <span class="bbs-modal-label">当前状态(受伤 / 疲惫等,无则留空)</span>
+          <input v-model="draft.condition" class="bbs-input" type="text" placeholder="可选" />
+        </label>
+        <label class="bbs-modal-field bbs-modal-check">
+          <input v-model="draft.important" type="checkbox" class="bbs-checkbox" />
+          <span class="bbs-modal-label">主要角色(核心主演,始终全量发送、重点追踪状态)</span>
         </label>
         <label class="bbs-modal-field bbs-modal-check">
           <input v-model="draft.follow" type="checkbox" class="bbs-checkbox" />
@@ -322,8 +396,20 @@ function confirmRemove() {
           <input v-model="editing.personality" class="bbs-input" type="text" placeholder="如:沉默寡言、护短" />
         </label>
         <label class="bbs-modal-field">
-          <span class="bbs-modal-label">外貌描述</span>
-          <textarea v-model="editing.desc" class="bbs-input bbs-modal-textarea" rows="3" placeholder="可选"></textarea>
+          <span class="bbs-modal-label">外貌描述(固定特征:发色 / 身材 / 疤痕,勿写穿着)</span>
+          <textarea v-model="editing.desc" class="bbs-input bbs-modal-textarea" rows="2" placeholder="可选"></textarea>
+        </label>
+        <label class="bbs-modal-field">
+          <span class="bbs-modal-label">当前着装(会随剧情变化)</span>
+          <input v-model="editing.outfit" class="bbs-input" type="text" placeholder="如:红斗篷、佩长剑" />
+        </label>
+        <label class="bbs-modal-field">
+          <span class="bbs-modal-label">当前状态(受伤 / 疲惫等,无则留空)</span>
+          <input v-model="editing.condition" class="bbs-input" type="text" placeholder="可选" />
+        </label>
+        <label class="bbs-modal-field bbs-modal-check">
+          <input v-model="editing.important" type="checkbox" class="bbs-checkbox" />
+          <span class="bbs-modal-label">主要角色(核心主演,始终全量发送、重点追踪状态)</span>
         </label>
         <label class="bbs-modal-field bbs-modal-check">
           <input v-model="editing.follow" type="checkbox" class="bbs-checkbox" />
@@ -392,6 +478,14 @@ function confirmRemove() {
   background: var(--bbs-accent);
   color: var(--bbs-accent-ink);
 }
+/* 主要角色分组标签:同强调底色 + 星标,与置顶组的「核心」地位呼应 */
+.bbs-npc-grouptag.is-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bbs-accent);
+  color: var(--bbs-accent-ink);
+}
 .bbs-npc-grouphint {
   font-size: 11.5px;
   color: var(--bbs-ink-muted);
@@ -403,16 +497,42 @@ function confirmRemove() {
   gap: 8px;
 }
 
-/* —— 角色行:首字徽记圆盘 + 信息体。圆盘是这页的标识元素(物品/场景都没有) —— */
+/* —— 角色卡:与物品/场景同款的安静卡片。在场/随行只用「左侧一道色条」表态,
+      不再用大圆球——保持列表整体的克制,把强调留给那道竖条。 —— */
 .bbs-npc {
+  position: relative;
   display: flex;
-  gap: 11px;
   padding: 10px 12px;
   border: 1px solid var(--bbs-line);
   border-radius: var(--bbs-radius);
   background: var(--bbs-surface);
+  overflow: hidden; /* 让左色条贴着圆角边缘 */
 }
-/* 不在场:整行压暗,与「只发名+身份」的弱化呼应 */
+/* 在场:左缘一道青瓷色条 */
+.bbs-npc.is-present::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--bbs-accent);
+  opacity: 0.5;
+}
+/* 随行:色条加粗加实,作同伴的最高标识 */
+.bbs-npc.is-follow::before {
+  width: 3px;
+  opacity: 1;
+}
+/* 主要角色:整条左色条加粗实色,卡片更醒目,呼应「核心主演」地位 */
+.bbs-npc.is-main::before {
+  width: 4px;
+  opacity: 1;
+}
+.bbs-npc.is-main {
+  border-color: var(--bbs-line-strong);
+}
+/* 不在场:整行压暗 + 虚线框,与「只发名+身份」的弱化呼应 */
 .bbs-npc.is-absent {
   background: transparent;
   border-style: dashed;
@@ -421,56 +541,26 @@ function confirmRemove() {
   color: var(--bbs-ink-soft);
 }
 
-.bbs-npc-disc {
-  flex: 0 0 auto;
-  width: 34px;
-  height: 34px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--bbs-radius-pill);
-  font-family: var(--bbs-font-mono);
-  font-size: 15px;
-  font-weight: 600;
-  /* 默认(不在场):中性灰盘 */
-  background: var(--bbs-surface-2);
-  color: var(--bbs-ink-muted);
-}
-/* 在场:青瓷染色盘 */
-.bbs-npc.is-present .bbs-npc-disc {
-  background: var(--bbs-accent-soft);
-  color: var(--bbs-accent);
-}
-/* 随行:实心盘,作同伴的最高标识 */
-.bbs-npc-disc.is-follow {
-  background: var(--bbs-accent);
-  color: var(--bbs-accent-ink);
-}
-
 .bbs-npc-body {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
+/* 头行:名字 + 一枚状态标(随行/所在地)+ 操作区。名字占自然宽,状态标吃剩余宽并截断,
+   操作区固定不被挤。身份不在这行——长身份单独成段,不再挤乱头行。 */
 .bbs-npc-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
 }
 .bbs-npc-name {
   font-size: 14px;
   font-weight: 600;
   color: var(--bbs-ink);
-  word-break: break-word;
-}
-.bbs-npc-title {
-  font-size: 12px;
-  color: var(--bbs-ink-muted);
-  min-width: 0;
-  flex: 1;
-  word-break: break-word;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .bbs-npc-acts {
   flex-shrink: 0;
@@ -479,38 +569,108 @@ function confirmRemove() {
   gap: 2px;
   margin-left: auto;
 }
-
-.bbs-npc-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
 .bbs-npc-flag {
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  min-width: 0;
   font-size: 11px;
   color: var(--bbs-ink-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .bbs-npc-flag.is-follow {
   color: var(--bbs-accent);
+  flex-shrink: 0;
 }
 .bbs-npc-flag.is-nowhere {
   font-style: italic;
   opacity: 0.7;
 }
-.bbs-npc-trait {
+
+/* —— 字段表:身份/性格/外貌统一成「彩色类别标签 + 内容」的对齐行。
+      标签同宽左对齐成一条竖列,用语义色区分类别,内容统一字号——治「三行同灰、层次乱」。 —— */
+.bbs-npc-fields {
   margin: 2px 0 0;
-  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.bbs-npc-field {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+.bbs-npc-field dt {
+  flex: 0 0 auto;
+  width: 30px;
+  text-align: center;
+  padding: 1px 0;
+  border-radius: var(--bbs-radius-sm);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 0.04em;
+  /* 默认中性,具体类别在下方各自染色 */
+  background: var(--bbs-surface-2);
+  color: var(--bbs-ink-muted);
+}
+.bbs-npc-field dd {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
   color: var(--bbs-ink-soft);
   word-break: break-word;
 }
-.bbs-npc-desc {
-  margin: 0;
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: var(--bbs-ink-soft);
-  word-break: break-word;
+/* 身份:强调金标签——这是最关键的一类身份信息 */
+.bbs-npc-field.f-title dt {
+  background: var(--bbs-accent-soft);
+  color: var(--bbs-accent);
+}
+.bbs-npc-field.f-title dd {
+  color: var(--bbs-ink);
+}
+/* 着装:暖色标签——即时层核心,与「会变的当前状态」呼应,内容也加重 */
+.bbs-npc-field.f-outfit dt {
+  background: var(--bbs-warning-soft);
+  color: var(--bbs-warning);
+}
+.bbs-npc-field.f-outfit dd {
+  color: var(--bbs-ink);
+}
+/* 状态/健康:警示色标签——受伤/异常一眼可辨 */
+.bbs-npc-field.f-cond dt {
+  background: var(--bbs-danger-soft);
+  color: var(--bbs-danger);
+}
+/* 性格:中性偏暖(沿用默认中性,与档案层弱化一致) */
+.bbs-npc-field.f-trait dt {
+  background: var(--bbs-surface-2);
+  color: var(--bbs-ink-muted);
+}
+/* 外貌 / 所在:中性标签(沿用默认),作次要细节 */
+
+/* 主要角色无状态时的占位提示:引导补录当前状态,避免空卡 */
+.bbs-npc-mainhint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--bbs-ink-muted);
+}
+
+/* PC(支持 hover)上操作按钮默认隐藏,悬停整卡才浮现;触屏常驻(与物品页一致) */
+@media (hover: hover) {
+  .bbs-npc-acts {
+    opacity: 0;
+    transition: opacity var(--bbs-dur) var(--bbs-ease);
+  }
+  .bbs-npc:hover .bbs-npc-acts,
+  .bbs-npc-acts:focus-within {
+    opacity: 1;
+  }
 }
 
 /* 行内操作按钮:复刻 items 页(scoped 不继承,重声明同款) */
@@ -541,6 +701,18 @@ function confirmRemove() {
 .bbs-npc-pin.active:hover {
   color: var(--bbs-accent);
   background: var(--bbs-accent-soft);
+}
+/* 主要角色星标:激活态点亮(实心感由强调色填充表达) */
+.bbs-npc-star.active {
+  color: var(--bbs-accent);
+}
+.bbs-npc-star.active:hover {
+  color: var(--bbs-accent);
+  background: var(--bbs-accent-soft);
+}
+/* 主要角色卡的操作区常驻(置顶组无需 hover 才显,星标本身就是状态指示) */
+.bbs-npc.is-main .bbs-npc-acts {
+  opacity: 1;
 }
 
 .bbs-modal-textarea {

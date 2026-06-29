@@ -84,6 +84,12 @@ export interface MemScene {
  *  - follow=true 随行(同伴跟主角移动),永远在场全量注入;
  *  - follow≠true 定点,仅当 location 落在当前地点或其祖先链才全量注入,否则只发名+身份。
  * ⚠️ follow 默认 false(多数 NPC 定点),与物品 carried 默认随身相反。
+ *
+ * 字段分两层:
+ *  - **档案层**(title/desc/personality):「他是谁/长什么样」,高门槛、几乎不变,记一次。
+ *  - **即时层**(outfit/condition):「他现在怎么样」,覆盖型、换就盖、不沉淀历史,鼓励跟剧情刷新。
+ *    即时层之所以不违反「只记长期重要信息」铁律,正因它压根不进历史——和当前时间/地点同性质。
+ * important=true 的「主要角色」:永远全量注入(跳过在场判定),界面/注入弱化档案、突出即时状态面板。
  */
 export interface MemNpc {
   id: string;
@@ -91,10 +97,16 @@ export interface MemNpc {
   name: string;
   /** 身份/职业一句话(不在场时唯一保留的信息) */
   title?: string;
-  /** 外貌描述 */
+  /** 固定外貌:发色/身材/疤痕等长期不变的体貌(档案层,高门槛,几乎不更新) */
   desc?: string;
   /** 简单性格 */
   personality?: string;
+  /** 当前着装(即时层,覆盖型;换装/弄脏弄破即刷新,门槛远低于 desc) */
+  outfit?: string;
+  /** 当前状态/健康(即时层,覆盖型;受伤/疲惫/中毒等,无异常时空) */
+  condition?: string;
+  /** 是否「主要角色」:剧情核心主演,永远全量注入,只追踪即时状态、不追档案 */
+  important?: boolean;
   /** 是否随行(随主角移动);省略/false=定点(按 location 匹配),true=同伴,永远在场 */
   follow?: boolean;
   /** 定点时的所在地(故事内地名);follow≠true 时用于与当前地点匹配 */
@@ -246,10 +258,16 @@ export interface NpcDelta {
   name: string;
   /** 身份/职业一句话 */
   title?: string;
-  /** 外貌描述 */
+  /** 固定外貌:长期不变的体貌(档案层) */
   desc?: string;
   /** 简单性格 */
   personality?: string;
+  /** 当前着装(即时层,覆盖型) */
+  outfit?: string;
+  /** 当前状态/健康(即时层,覆盖型) */
+  condition?: string;
+  /** 是否「主要角色」(剧情核心主演,永远全量注入) */
+  important?: boolean;
   /** 是否随行(随主角移动)。省略=定点;明确随主角同行的同伴填 true */
   follow?: boolean;
   /** 定点时的所在地(故事内地名) */

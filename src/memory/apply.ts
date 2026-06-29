@@ -183,6 +183,17 @@ function applyNpcPlacement(n: { follow?: boolean; location?: string }, src: NpcD
 }
 
 /**
+ * 把 delta 里的「即时层」状态(outfit/condition)与 important 施加到 NPC 上。
+ * 与档案层(desc/title)不同:即时层一旦 delta 给了就**直接覆盖**(它本就是当前快照,
+ * 不像 desc 那样「实质变化才动」);add 与 update 同样处理,确保换装/受伤能即时刷新。
+ */
+function applyNpcState(n: { outfit?: string; condition?: string; important?: boolean }, src: NpcDelta): void {
+  if (typeof src.outfit === 'string') n.outfit = src.outfit.trim() || undefined;
+  if (typeof src.condition === 'string') n.condition = src.condition.trim() || undefined;
+  if (typeof src.important === 'boolean') n.important = src.important || undefined;
+}
+
+/**
  * 逐级 upsert 一条场景路径到派生场景树。
  * 遍历 path 的每个前缀确保每级节点存在(缺则创建,父 id 由上一级前缀算出);
  * 仅**最末级**节点采用 desc(setDesc 为真=update 覆盖;否则 add 仅在原本无描述时补)。
@@ -384,10 +395,12 @@ function applyStoredDeltaTo(mem: BaibaiMemory, d: StoredDelta, leaf: { id: strin
       const id = npcId(add.name);
       const ex = mem.npcs.find(n => n.id === id);
       if (ex) {
-        // 已存在:add 视作补全(仅填空,不覆盖既有),再施加位置
+        // 已存在:档案层(title/desc/性格)add 视作补全(仅填空,不覆盖既有);
+        // 即时层(outfit/condition/important)仍直接覆盖(它本就是当前快照),再施加位置。
         if (add.title && !ex.title) ex.title = add.title.trim();
         if (add.desc && !ex.desc) ex.desc = add.desc.trim();
         if (add.personality && !ex.personality) ex.personality = add.personality.trim();
+        applyNpcState(ex, add);
         applyNpcPlacement(ex, add);
         ex.updatedAt = t;
       } else {
@@ -400,6 +413,7 @@ function applyStoredDeltaTo(mem: BaibaiMemory, d: StoredDelta, leaf: { id: strin
           createdAt: t,
           updatedAt: t,
         };
+        applyNpcState(npc, add);
         applyNpcPlacement(npc, add);
         mem.npcs.push(npc);
       }
@@ -411,6 +425,7 @@ function applyStoredDeltaTo(mem: BaibaiMemory, d: StoredDelta, leaf: { id: strin
       if (upd.title) n.title = upd.title.trim();
       if (upd.desc) n.desc = upd.desc.trim();
       if (upd.personality) n.personality = upd.personality.trim();
+      applyNpcState(n, upd); // 即时层(着装/状态/重要性)覆盖刷新
       applyNpcPlacement(n, upd); // 随行/所在地变更(NPC 移动)
       n.updatedAt = t;
     }
@@ -661,6 +676,9 @@ export function finalizeDelta(delta: SummaryDelta, openPlansOrdered: { id: strin
           title: n.title?.trim() || undefined,
           desc: n.desc?.trim() || undefined,
           personality: n.personality?.trim() || undefined,
+          outfit: n.outfit?.trim() || undefined,
+          condition: n.condition?.trim() || undefined,
+          important: typeof n.important === 'boolean' ? n.important : undefined,
           follow: typeof n.follow === 'boolean' ? n.follow : undefined,
           location: n.location?.trim() || undefined,
         }))
@@ -853,7 +871,17 @@ export function editItem(
 
 /** 手动新增一个 NPC。无有效叶子返回 false。 */
 export function upsertNpc(
-  fields: { name: string; title?: string; desc?: string; personality?: string; follow?: boolean; location?: string },
+  fields: {
+    name: string;
+    title?: string;
+    desc?: string;
+    personality?: string;
+    outfit?: string;
+    condition?: string;
+    important?: boolean;
+    follow?: boolean;
+    location?: string;
+  },
 ): boolean {
   const name = fields.name.trim();
   if (!name) return false;
@@ -864,6 +892,9 @@ export function upsertNpc(
         title: fields.title?.trim() || undefined,
         desc: fields.desc?.trim() || undefined,
         personality: fields.personality?.trim() || undefined,
+        outfit: fields.outfit?.trim() || undefined,
+        condition: fields.condition?.trim() || undefined,
+        important: fields.important,
         follow: fields.follow,
         location: fields.location?.trim() || undefined,
       }],
@@ -880,24 +911,38 @@ export function upsertNpc(
  */
 export function editNpc(
   oldName: string,
-  patch: { name?: string; title?: string; desc?: string; personality?: string; follow?: boolean; location?: string },
+  patch: {
+    name?: string;
+    title?: string;
+    desc?: string;
+    personality?: string;
+    outfit?: string;
+    condition?: string;
+    important?: boolean;
+    follow?: boolean;
+    location?: string;
+  },
 ): boolean {
   const newName = patch.name?.trim() || oldName;
   const title = patch.title?.trim() || undefined;
   const desc = patch.desc?.trim() || undefined;
   const personality = patch.personality?.trim() || undefined;
 
-  // 位置:patch 明确给了用 patch 的;否则从旧 NPC 继承(改名不丢所在地/随行)
+  // 位置 / 即时层:patch 明确给了用 patch 的;否则从旧 NPC 继承(改名不丢所在地/随行/状态/重要性)
   const prev = memory.npcs.find(n => n.id === npcId(oldName));
   const follow = patch.follow !== undefined ? patch.follow : prev?.follow;
   const location = patch.location !== undefined ? (patch.location.trim() || undefined) : prev?.location;
+  const outfit = patch.outfit !== undefined ? (patch.outfit.trim() || undefined) : prev?.outfit;
+  const condition = patch.condition !== undefined ? (patch.condition.trim() || undefined) : prev?.condition;
+  const important = patch.important !== undefined ? patch.important : prev?.important;
 
+  const fields = { title, desc, personality, outfit, condition, important, follow, location };
   if (norm(newName) !== norm(oldName)) {
     return appendOpToLatestLeaf({
-      npcs: { remove: [oldName], add: [{ name: newName, title, desc, personality, follow, location }] },
+      npcs: { remove: [oldName], add: [{ name: newName, ...fields }] },
     });
   }
-  return appendOpToLatestLeaf({ npcs: { update: [{ name: newName, title, desc, personality, follow, location }] } });
+  return appendOpToLatestLeaf({ npcs: { update: [{ name: newName, ...fields }] } });
 }
 
 /**
@@ -910,6 +955,13 @@ export function setNpcFollow(name: string, follow: boolean, location?: string): 
   if (!nm) return false;
   const loc = follow ? undefined : (location?.trim() || undefined);
   return appendOpToLatestLeaf({ npcs: { update: [{ name: nm, follow, location: loc }] } });
+}
+
+/** 切换某 NPC 的「主要角色」标记(升/降重要性);与 setNpcFollow 同范式,写回最新叶子。 */
+export function setNpcImportant(name: string, important: boolean): boolean {
+  const nm = name.trim();
+  if (!nm) return false;
+  return appendOpToLatestLeaf({ npcs: { update: [{ name: nm, important }] } });
 }
 
 /** 手动删除一个 NPC(退场)。 */

@@ -308,36 +308,64 @@ function npcOnScene(npc: MemNpc, here: string, chain: MemScene[]): boolean {
   return itemReachableInScene(npc.location, here, chain);
 }
 
+/** 把 NPC 的「即时状态」(着装/状态/所在)拼成一段尾注;无则空串。供在场与主要角色组复用。 */
+function npcStateTail(n: MemNpc, withPlace: boolean): string {
+  const tail: string[] = [];
+  if (n.outfit?.trim()) tail.push(`着装:${n.outfit.trim()}`);
+  if (n.condition?.trim()) tail.push(`状态:${n.condition.trim()}`);
+  if (withPlace) {
+    if (n.follow) tail.push('随行');
+    else if (n.location?.trim()) tail.push(`在:${n.location.trim()}`);
+  }
+  return tail.length ? ` 〔${tail.join(';')}〕` : '';
+}
+
 /**
- * 渲染 NPC 名册注入块(分两档省 token):
- *  - 在场(随行 / 所在地落当前地点或祖先链)→ 全量:名 + 身份 + 性格 + 描述。
- *  - 不在场 → 只发 名 + 身份(title),砍掉描述/性格这两个大头。
+ * 渲染 NPC 名册注入块(分三档省 token):
+ *  - **主要角色**(important):永远全量置顶,**突出即时状态面板**(着装/状态/所在),身份/性格/外貌从简。
+ *  - 在场(随行 / 所在地落当前地点或祖先链)→ 全量:名 + 身份 + 性格 + 外貌 + 即时状态。
+ *  - 不在场 → 只发 名 + 身份(title),砍掉外貌/性格这两个大头(但主要角色即便不在场也已在上面全量发了)。
  * 无 NPC 返回空串。
  */
 function fmtNpcContext(npcs: MemNpc[], here: string, chain: MemScene[]): string {
   if (!npcs.length) return '';
+  const main: MemNpc[] = [];
   const present: MemNpc[] = [];
   const absent: MemNpc[] = [];
-  for (const n of npcs) (npcOnScene(n, here, chain) ? present : absent).push(n);
+  for (const n of npcs) {
+    if (n.important) main.push(n); // 主要角色单列,不再进在场/不在场判定
+    else if (npcOnScene(n, here, chain)) present.push(n);
+    else absent.push(n);
+  }
 
   const lines: string[] = [];
+  if (main.length) {
+    // 主要角色:状态面板优先。身份留一句帮定位,外貌/性格从简(卡里通常已有),重点是即时状态。
+    const detailed = main
+      .map(n => {
+        const head = n.title?.trim() ? `${n.name}(${n.title.trim()})` : n.name;
+        return `  - ${head}${npcStateTail(n, true)}`;
+      })
+      .join('\n');
+    lines.push(`主要角色(核心主演,需始终保持其当前状态连贯):\n${detailed}`);
+  }
   if (present.length) {
     const detailed = present
       .map(n => {
         const parts = [n.name];
         if (n.title?.trim()) parts.push(`(${n.title.trim()})`);
-        const tail: string[] = [];
-        if (n.personality?.trim()) tail.push(`性格:${n.personality.trim()}`);
-        if (n.desc?.trim()) tail.push(n.desc.trim());
-        const tailStr = tail.length ? ` —— ${tail.join(';')}` : '';
+        const profile: string[] = [];
+        if (n.personality?.trim()) profile.push(`性格:${n.personality.trim()}`);
+        if (n.desc?.trim()) profile.push(n.desc.trim());
+        const profileStr = profile.length ? ` —— ${profile.join(';')}` : '';
         const place = n.follow ? ' [随行]' : '';
-        return `  - ${parts.join('')}${place}${tailStr}`;
+        return `  - ${parts.join('')}${place}${profileStr}${npcStateTail(n, false)}`;
       })
       .join('\n');
     lines.push(`在场角色:\n${detailed}`);
   }
   if (absent.length) {
-    // 不在场:仅名 + 身份,按所在地括注;无描述/性格
+    // 不在场:仅名 + 身份,按所在地括注;无外貌/性格/状态
     const brief = absent
       .map(n => {
         const title = n.title?.trim() ? `(${n.title.trim()})` : '';
