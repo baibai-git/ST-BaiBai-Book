@@ -47,12 +47,19 @@ export async function requestCompletion(
   if (!channel.url || !channel.model) throw new ApiError('副 API 渠道未配置完整(缺 url 或 model)');
 
   const stream = channel.stream ?? false;
+  // 预填充开关(默认开):关闭时丢掉末尾那条 assistant 预填充消息。
+  // 摘要/批量请求会在末尾追加一条 assistant 预填充引导思维链;对不支持预填充(不续写)的端点
+  // 形同浪费、个别端点还要求「最后一条须为 user」。关掉只是不发它,思维链引导仍由 system 清单承担。
+  const outMessages =
+    channel.prefill === false && messages[messages.length - 1]?.role === 'assistant'
+      ? messages.slice(0, -1)
+      : messages;
   const body: Record<string, unknown> = {
     chat_completion_source: 'openai',
     reverse_proxy: normalizeUrl(channel.url),
     proxy_password: channel.key || '',
     model: channel.model,
-    messages,
+    messages: outMessages,
     temperature: channel.temperature ?? 1.0,
     max_tokens: channel.maxTokens ?? 8192,
     stream,

@@ -24,6 +24,12 @@ export interface ApiChannel {
   maxTokens: number;
   /** 流式传输(默认关);开启后按 SSE 增量拼接 */
   stream: boolean;
+  /**
+   * 发送预填充(默认开)。摘要/批量请求末尾带一条 assistant 预填充消息,引导模型从思维链续写、
+   * 并压制拒答。Claude 等原生支持预填充的后端收益明显;若端点要求「最后一条必须是 user」
+   * 或为纯 OpenAI 端点(预填充不被续写、形同浪费),可关掉——关掉只是不发那条尾 assistant,
+   * 思维链引导仍由 system 检查清单承担,不影响功能。 */
+  prefill: boolean;
   /** 排除参数:这些字段名会在构造请求体时从 body 中删除,
    *  用于规避不接受某些参数(如 temperature/max_tokens)的兼容端点报错。 */
   excludeParams: string[];
@@ -336,6 +342,7 @@ function normalizeChannel(c: Partial<ApiChannel>): ApiChannel {
     temperature: typeof c.temperature === 'number' ? c.temperature : 1.0,
     maxTokens: typeof c.maxTokens === 'number' ? c.maxTokens : 8192,
     stream: typeof c.stream === 'boolean' ? c.stream : false,
+    prefill: typeof c.prefill === 'boolean' ? c.prefill : true, // 后加字段:老数据默认开(保持原行为)
     excludeParams: Array.isArray(c.excludeParams)
       ? c.excludeParams.filter((x): x is string => typeof x === 'string')
       : [],
@@ -461,6 +468,7 @@ export function newChannel(): ApiChannel {
     temperature: 1.0,
     maxTokens: 8192,
     stream: false,
+    prefill: true,
     excludeParams: [],
   };
 }
