@@ -16,8 +16,10 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
  * 开关与自定义图标(ui.orbImage,服务器路径)跨设备同步,由设置承载。
  */
 
-const ORB_W = 42;
-const ORB_H = 54;
+// 尺寸随形状 + 用户基准尺寸(ui.orbSize):书签按 0.78 宽高比(竖长方),圆/方等边正方。
+// 拖动/吸附计算与内联尺寸都读它。
+const orbW = computed(() => (ui.orbShape === 'bookmark' ? Math.round(ui.orbSize * 0.78) : ui.orbSize));
+const orbH = computed(() => ui.orbSize);
 const SNAP_ZONE = 56; // 松手时距左/右边缘 ≤ 此值即吸附贴边
 const CLICK_SLOP = 6; // 位移 < 此值视为点击而非拖动
 const POS_KEY = 'bbs.orb.pos.v1';
@@ -57,10 +59,10 @@ let moved = 0; // 累计位移,用于点击/拖动判定
 
 // 进入视口后把坐标夹进可视范围(换了更小的屏幕/旋转后不至于跑出去)
 function clampToViewport(): void {
-  const maxY = Math.max(0, window.innerHeight - ORB_H);
+  const maxY = Math.max(0, window.innerHeight - orbH.value);
   pos.y = Math.min(Math.max(0, pos.y), maxY);
   if (pos.dock === 'none') {
-    const maxX = Math.max(0, window.innerWidth - ORB_W);
+    const maxX = Math.max(0, window.innerWidth - orbW.value);
     pos.x = Math.min(Math.max(0, pos.x), maxX);
   }
 }
@@ -77,8 +79,12 @@ function savePos(): void {
 const orbStyle = computed(() => {
   const base: Record<string, string> = {
     top: `${pos.y}px`,
-    width: `${ORB_W}px`,
-    height: `${ORB_H}px`,
+    width: `${orbW.value}px`,
+    height: `${orbH.value}px`,
+    // 静止不透明度走 CSS 变量,唤起/拖动态由类覆盖回全显
+    '--orb-rest-opacity': String(Math.min(100, Math.max(20, ui.orbOpacity)) / 100),
+    // 图标字号随基准尺寸缩放(原 48 球 ≈ 22px),保持图标与球体比例协调
+    '--orb-icon-size': `${Math.round(ui.orbSize * 0.46)}px`,
   };
   if (pos.dock === 'left') {
     base.left = '0px';
@@ -114,7 +120,7 @@ let grabDY = 0;
 
 /** 当前左上角的实际 x(贴边态由 right/translate 折算成绝对像素,供拖动起步用) */
 function currentLeft(): number {
-  if (pos.dock === 'right') return window.innerWidth - ORB_W;
+  if (pos.dock === 'right') return window.innerWidth - orbW.value;
   if (pos.dock === 'left') return 0;
   return pos.x;
 }
@@ -142,7 +148,7 @@ function onUp(e: PointerEvent) {
 
   // 松手吸附判定:靠近左/右边缘才贴边,否则停在原地(中间)
   const left = pos.x;
-  const right = window.innerWidth - (pos.x + ORB_W);
+  const right = window.innerWidth - (pos.x + orbW.value);
   if (left <= SNAP_ZONE) pos.dock = 'left';
   else if (right <= SNAP_ZONE) pos.dock = 'right';
   else pos.dock = 'none';
@@ -172,7 +178,7 @@ onUnmounted(() => window.removeEventListener('resize', onResize));
 <template>
   <div
     class="bbs-orb"
-    :class="{ 'is-dragging': dragging, 'has-image': !!orbImage }"
+    :class="[`shape-${ui.orbShape}`, { 'is-dragging': dragging, 'has-image': !!orbImage }]"
     :style="orbStyle"
     role="button"
     tabindex="0"
@@ -199,20 +205,34 @@ onUnmounted(() => window.removeEventListener('resize', onResize));
   display: flex;
   align-items: center;
   justify-content: center;
-  /* 书签缎带轮廓:底部燕尾缺口。自定义图与默认图都被切成同一形状。 */
-  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 78%, 0 100%);
   background: var(--bbs-surface);
   color: var(--bbs-accent);
   cursor: grab;
   touch-action: none;
   user-select: none;
-  /* clip-path 与 box-shadow 不叠加,用 drop-shadow 让阴影跟随书签轮廓 */
+  /* drop-shadow 对 clip-path(书签)与 border-radius(圆/方)都跟随轮廓,统一用它 */
   filter: drop-shadow(0 6px 14px oklch(0 0 0 / 0.28));
-  opacity: 0.62;
+  opacity: var(--orb-rest-opacity, 0.62);
   transition:
     transform var(--bbs-dur) var(--bbs-ease),
     opacity var(--bbs-dur) var(--bbs-ease);
 }
+
+/* —— 形状 —— */
+/* 书签:缎带轮廓 + 底部燕尾缺口。clip-path 天然裁切自定义图。 */
+.bbs-orb.shape-bookmark {
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 78%, 0 100%);
+}
+/* 圆 / 方:border-radius + overflow 裁切自定义图 */
+.bbs-orb.shape-circle {
+  border-radius: 999px;
+  overflow: hidden;
+}
+.bbs-orb.shape-square {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
 /* 唤起(hover/聚焦/拖动)或停在中间(free) → 全显 */
 .bbs-orb:hover,
 .bbs-orb:focus-visible,
@@ -228,10 +248,12 @@ onUnmounted(() => window.removeEventListener('resize', onResize));
 }
 
 .bbs-orb-icon {
-  font-size: 22px;
-  /* 图标整体上移,避开底部燕尾缺口 */
-  margin-bottom: 6px;
+  font-size: var(--orb-icon-size, 22px);
   pointer-events: none;
+}
+/* 书签:图标上移,避开底部燕尾缺口(圆/方无缺口,居中即可) */
+.bbs-orb.shape-bookmark .bbs-orb-icon {
+  margin-bottom: 6px;
 }
 
 .bbs-orb-img {
@@ -239,10 +261,6 @@ onUnmounted(() => window.removeEventListener('resize', onResize));
   height: 100%;
   object-fit: cover;
   pointer-events: none;
-}
-/* 自定义图填满时,内描边收一道细线把任意图收进同一形状 */
-.bbs-orb.has-image {
-  background: var(--bbs-surface);
 }
 
 @media (prefers-reduced-motion: reduce) {

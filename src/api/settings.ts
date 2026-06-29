@@ -109,6 +109,12 @@ export interface UiPrefs {
   showOrb: boolean;
   /** 悬浮球自定义图标:ST 服务器图片路径(saveBase64AsFile 返回的短串);空=用默认书签图标。跨设备同步。 */
   orbImage: string;
+  /** 悬浮球形状:bookmark 书签(默认)/ circle 圆 / square 方。 */
+  orbShape: string;
+  /** 悬浮球静止时不透明度(百分比 20–100,默认 62)。唤起/拖动时一律全显。 */
+  orbOpacity: number;
+  /** 悬浮球基准尺寸(px,32–80,默认 48)。书签按比例放宽高,圆/方为等边边长。 */
+  orbSize: number;
 }
 
 /** 字数详尽档位:detailed=详细(默认),concise=精简(摘要/总结/二次总结字数一并降低)。仅影响内置模板。 */
@@ -182,6 +188,9 @@ function defaults(): ApiSettings {
       showQuickReply: false,
       showOrb: false,
       orbImage: '',
+      orbShape: 'bookmark',
+      orbOpacity: 62,
+      orbSize: 48,
     },
     prompts: { summary: '', resummary: '', resummary2: '', jailbreak: '', timeTag: '' },
     verbosity: 'detailed',
@@ -231,6 +240,17 @@ function normalize(raw: unknown): ApiSettings {
     showQuickReply: typeof ru.showQuickReply === 'boolean' ? ru.showQuickReply : d.ui.showQuickReply,
     showOrb: typeof ru.showOrb === 'boolean' ? ru.showOrb : d.ui.showOrb,
     orbImage: typeof ru.orbImage === 'string' ? ru.orbImage : d.ui.orbImage,
+    orbShape: typeof ru.orbShape === 'string' ? ru.orbShape : d.ui.orbShape,
+    // 透明度:钳到 20–100,缺失/非法回退默认(太低会看不见,设 20 下限)
+    orbOpacity:
+      typeof ru.orbOpacity === 'number' && Number.isFinite(ru.orbOpacity)
+        ? Math.min(100, Math.max(20, Math.round(ru.orbOpacity)))
+        : d.ui.orbOpacity,
+    // 尺寸:钳到 32–80,缺失/非法回退默认
+    orbSize:
+      typeof ru.orbSize === 'number' && Number.isFinite(ru.orbSize)
+        ? Math.min(80, Math.max(32, Math.round(ru.orbSize)))
+        : d.ui.orbSize,
   };
   // excludedChars 必须是字符串数组,旧值类型不符时回退空数组
   merged.excludedChars = Array.isArray(merged.excludedChars)

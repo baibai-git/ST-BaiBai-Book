@@ -42,6 +42,23 @@ interface UiState {
   showOrb: boolean;
   /** 悬浮球自定义图标(ST 服务器图片路径;空=默认书签图标) */
   orbImage: string;
+  /** 悬浮球形状:bookmark / circle / square */
+  orbShape: OrbShape;
+  /** 悬浮球静止不透明度(百分比 20–100) */
+  orbOpacity: number;
+  /** 悬浮球基准尺寸(px,32–80) */
+  orbSize: number;
+}
+
+/** 悬浮球形状 */
+export type OrbShape = 'bookmark' | 'circle' | 'square';
+export const ORB_SHAPES: { value: OrbShape; label: string }[] = [
+  { value: 'bookmark', label: '书签' },
+  { value: 'circle', label: '圆形' },
+  { value: 'square', label: '方形' },
+];
+function validOrbShape(s: string): OrbShape {
+  return s === 'bookmark' || s === 'circle' || s === 'square' ? s : 'bookmark';
 }
 
 // activePage(上次停在哪一页)是纯本机临时导航态,跨设备同步无意义、且翻页即回写服务器太频繁,
@@ -75,6 +92,9 @@ export const ui = reactive<UiState>({
   showQuickReply: apiSettings.ui.showQuickReply,
   showOrb: apiSettings.ui.showOrb,
   orbImage: apiSettings.ui.orbImage,
+  orbShape: validOrbShape(apiSettings.ui.orbShape),
+  orbOpacity: apiSettings.ui.orbOpacity,
+  orbSize: apiSettings.ui.orbSize,
 });
 
 // settings 跨设备同步值就绪后,把主题/导航回灌进 ui(覆盖 import 阶段的默认)
@@ -86,11 +106,25 @@ onSettingsReady(() => {
   ui.showQuickReply = apiSettings.ui.showQuickReply;
   ui.showOrb = apiSettings.ui.showOrb;
   ui.orbImage = apiSettings.ui.orbImage;
+  ui.orbShape = validOrbShape(apiSettings.ui.orbShape);
+  ui.orbOpacity = apiSettings.ui.orbOpacity;
+  ui.orbSize = apiSettings.ui.orbSize;
 });
 
 // ui 改变 → 写回 apiSettings.ui(由 settings 的 watch 防抖落盘、跨设备同步);activePage 仍存本机。
 watch(
-  () => [ui.theme, ui.navPosition, ui.navTapClose, ui.showTopBar, ui.showQuickReply, ui.showOrb, ui.orbImage],
+  () => [
+    ui.theme,
+    ui.navPosition,
+    ui.navTapClose,
+    ui.showTopBar,
+    ui.showQuickReply,
+    ui.showOrb,
+    ui.orbImage,
+    ui.orbShape,
+    ui.orbOpacity,
+    ui.orbSize,
+  ],
   () => {
     apiSettings.ui.theme = ui.theme;
     apiSettings.ui.navPosition = ui.navPosition;
@@ -99,6 +133,9 @@ watch(
     apiSettings.ui.showQuickReply = ui.showQuickReply;
     apiSettings.ui.showOrb = ui.showOrb;
     apiSettings.ui.orbImage = ui.orbImage;
+    apiSettings.ui.orbShape = ui.orbShape;
+    apiSettings.ui.orbOpacity = ui.orbOpacity;
+    apiSettings.ui.orbSize = ui.orbSize;
   },
 );
 watch(

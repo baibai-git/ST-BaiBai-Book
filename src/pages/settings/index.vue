@@ -22,7 +22,7 @@ import { checkForUpdate, performUpdate, updateState } from '@/memory/update';
 import { recallDebug } from '@/memory/vector/debug';
 import { computeCarryoverPlan, createNewChatWithCarryover, type CarryoverPlan } from '@/memory/carryover';
 import { computeMigrationPlan, runHoraeMigration, type MigrationPlan } from '@/memory/migrate';
-import { ui, THEMES, type NavPosition } from '@/state/ui';
+import { ui, THEMES, ORB_SHAPES, type NavPosition } from '@/state/ui';
 import { uploadOrbImage } from '@/st/upload';
 import { toast } from '@/st/toast';
 import { computed, nextTick, onMounted, ref } from 'vue';
@@ -678,27 +678,68 @@ function scorePct(score: number): number {
         </label>
         <p class="bbs-field-hint">在输入框上方(与快速回复同位)加一个「柏宝书」按钮,跟随酒馆主题美化。</p>
 
-        <label class="bbs-switch-row">
-          <span class="bbs-field-label">显示屏幕悬浮球</span>
-          <input v-model="ui.showOrb" type="checkbox" class="bbs-checkbox" />
-        </label>
-        <p class="bbs-field-hint">在屏幕边缘挂一枚可拖动的悬浮球,点击即开柏宝书。拖到中间可常驻悬浮,拖近左右边缘则吸附贴边。</p>
+        <!-- 屏幕悬浮球:配置项多,收进可收缩小分组 -->
+        <Collapsible title="屏幕悬浮球" :open="false">
+          <label class="bbs-switch-row">
+            <span class="bbs-field-label">显示屏幕悬浮球</span>
+            <input v-model="ui.showOrb" type="checkbox" class="bbs-checkbox" />
+          </label>
+          <p class="bbs-field-hint">在屏幕边缘挂一枚可拖动的悬浮球,点击即开柏宝书。拖到中间可常驻悬浮,拖近左右边缘则吸附贴边。</p>
 
-        <!-- 悬浮球图标:仅开启时可配 -->
-        <div v-if="ui.showOrb" class="bbs-orb-config">
-          <div class="bbs-orb-preview" :class="{ 'has-image': !!ui.orbImage }">
-            <img v-if="ui.orbImage" :src="ui.orbImage" alt="悬浮球图标预览" />
-            <Icon v-else name="bookmark" />
+          <!-- 形状:仅开启时可配 -->
+          <div v-if="ui.showOrb" class="bbs-field">
+            <div class="bbs-field-head">
+              <span class="bbs-field-label">形状</span>
+            </div>
+            <div class="bbs-segmented">
+              <button
+                v-for="s in ORB_SHAPES"
+                :key="s.value"
+                type="button"
+                class="bbs-seg"
+                :class="{ 'is-on': ui.orbShape === s.value }"
+                @click="ui.orbShape = s.value"
+              >
+                {{ s.label }}
+              </button>
+            </div>
           </div>
-          <div class="bbs-orb-config-actions">
-            <button type="button" class="bbs-btn bbs-btn-sm bbs-btn-primary" :disabled="orbUploading" @click="pickOrbImage">
-              {{ orbUploading ? '上传中…' : ui.orbImage ? '更换图标' : '上传图标' }}
-            </button>
-            <button v-if="ui.orbImage" type="button" class="bbs-btn bbs-btn-sm" @click="resetOrbImage">恢复默认</button>
+
+          <!-- 静止透明度:仅开启时可配 -->
+          <div v-if="ui.showOrb" class="bbs-field">
+            <div class="bbs-field-head">
+              <span class="bbs-field-label">静止透明度</span>
+              <span class="bbs-field-value">{{ ui.orbOpacity }}%</span>
+            </div>
+            <input v-model.number="ui.orbOpacity" type="range" min="20" max="100" step="1" class="bbs-range" />
+            <p class="bbs-field-hint">悬浮球静止时的不透明度;鼠标悬停 / 拖动时一律全显。</p>
           </div>
-          <input ref="orbFileInput" type="file" accept="image/*" hidden @change="onOrbFileChange" />
-        </div>
-        <p v-if="ui.showOrb" class="bbs-field-hint">自定义图标会压缩后上传到酒馆服务器(跨设备同步);留空则用默认书签图标。</p>
+
+          <!-- 大小:仅开启时可配 -->
+          <div v-if="ui.showOrb" class="bbs-field">
+            <div class="bbs-field-head">
+              <span class="bbs-field-label">大小</span>
+              <span class="bbs-field-value">{{ ui.orbSize }}px</span>
+            </div>
+            <input v-model.number="ui.orbSize" type="range" min="32" max="80" step="1" class="bbs-range" />
+          </div>
+
+          <!-- 图标:仅开启时可配 -->
+          <div v-if="ui.showOrb" class="bbs-orb-config">
+            <div class="bbs-orb-preview" :class="[`shape-${ui.orbShape}`, { 'has-image': !!ui.orbImage }]">
+              <img v-if="ui.orbImage" :src="ui.orbImage" alt="悬浮球图标预览" />
+              <Icon v-else name="bookmark" />
+            </div>
+            <div class="bbs-orb-config-actions">
+              <button type="button" class="bbs-btn bbs-btn-sm bbs-btn-primary" :disabled="orbUploading" @click="pickOrbImage">
+                {{ orbUploading ? '上传中…' : ui.orbImage ? '更换图标' : '上传图标' }}
+              </button>
+              <button v-if="ui.orbImage" type="button" class="bbs-btn bbs-btn-sm" @click="resetOrbImage">恢复默认</button>
+            </div>
+            <input ref="orbFileInput" type="file" accept="image/*" hidden @change="onOrbFileChange" />
+          </div>
+          <p v-if="ui.showOrb" class="bbs-field-hint">自定义图标会压缩后上传到酒馆服务器(跨设备同步);留空则用默认书签图标。</p>
+        </Collapsible>
       </Collapsible>
 
       <!-- 副 API -->
@@ -1496,12 +1537,56 @@ function scorePct(score: number): number {
   margin-bottom: 0;
 }
 .bbs-field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 10px;
 }
 .bbs-field-label {
   font-size: 14px;
   font-weight: 600;
   color: var(--bbs-ink);
+}
+/* 字段右上角的数值(如透明度百分比) */
+.bbs-field-value {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--bbs-accent);
+}
+
+/* 滑块:用主题色,跨浏览器统一外观 */
+.bbs-range {
+  width: 100%;
+  height: 4px;
+  margin: 6px 0 12px;
+  border-radius: var(--bbs-radius-pill);
+  background: var(--bbs-surface-2);
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+.bbs-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--bbs-radius-pill);
+  background: var(--bbs-accent);
+  border: 2px solid var(--bbs-surface);
+  box-shadow: 0 1px 3px oklch(0 0 0 / 0.25);
+}
+.bbs-range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: var(--bbs-radius-pill);
+  background: var(--bbs-accent);
+  border: 2px solid var(--bbs-surface);
+}
+.bbs-range:focus-visible {
+  outline: 2px solid var(--bbs-accent);
+  outline-offset: 3px;
 }
 .bbs-field-hint {
   margin: 0 0 14px;
@@ -1668,6 +1753,17 @@ function scorePct(score: number): number {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+/* 预览随所选形状变化,让用户直观看到效果 */
+.bbs-orb-preview.shape-bookmark {
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 78%, 0 100%);
+  border-color: transparent;
+}
+.bbs-orb-preview.shape-circle {
+  border-radius: 999px;
+}
+.bbs-orb-preview.shape-square {
+  border-radius: 12px;
 }
 .bbs-orb-config-actions {
   display: flex;
