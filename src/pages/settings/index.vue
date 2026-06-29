@@ -738,7 +738,7 @@ function scorePct(score: number): number {
             </div>
             <input ref="orbFileInput" type="file" accept="image/*" hidden @change="onOrbFileChange" />
           </div>
-          <p v-if="ui.showOrb" class="bbs-field-hint">自定义图标会压缩后上传到酒馆服务器(跨设备同步);留空则用默认书签图标。</p>
+          <p v-if="ui.showOrb" class="bbs-field-hint">支持静态图与 GIF 动图(GIF 保留动画,≤2MB)。图标上传到酒馆服务器、跨设备同步;留空则用默认书签图标。</p>
         </Collapsible>
       </Collapsible>
 
