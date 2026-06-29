@@ -3,7 +3,7 @@ import { fmtItemLogInline } from './prompts';
 import { memory, recomputeDerived, saveMemory, scheduleLeafFlush } from './store';
 import { readItemsTagText, writeItemLogTag } from './timeTag';
 import { createEmptyMemory } from './types';
-import type { BaibaiMemory, ItemDelta, ItemLogEntry, LeafExtra, MemPlan, MemScene, MemSummary, SceneDelta, SceneReparent, StoredDelta, SummaryDelta } from './types';
+import type { BaibaiMemory, ItemDelta, ItemLogEntry, LeafExtra, MemPlan, MemScene, MemSummary, NpcDelta, SceneDelta, SceneReparent, StoredDelta, SummaryDelta } from './types';
 
 let idSeq = 0;
 /** 生成稳定唯一 id(不依赖 random;时间走 nowMs 便于测试注入) */
@@ -27,6 +27,10 @@ function norm(s: string): string {
 export function itemId(name: string): string {
   return `item:${norm(name)}`;
 }
+/** NPC id:按规范化名,故重放幂等、手动 op 可稳定引用 */
+export function npcId(name: string): string {
+  return `npc:${norm(name)}`;
+}
 /** 计划 id:产生它的叶子 id + 在该叶子 add 数组里的序号 */
 export function planId(leafId: string, addIndex: number): string {
   return `plan:${leafId}#${addIndex}`;
@@ -40,6 +44,49 @@ export function normScenePath(path: string[] | undefined): string[] {
 /** 场景 id:按规范化路径(小写、'/'分隔),故重放幂等、手动 op 可稳定引用 */
 export function sceneId(path: string[]): string {
   return `scene:${normScenePath(path).map(norm).join('/')}`;
+}
+
+/**
+ * 当前地点 ↔ 场景树的「权威定位」:返回当前所在节点 id(找不到返回 '')。
+ * 注入端与场景页**共用此函数**,杜绝两处分叉导致页面/提示词不一致。
+ *
+ * 定位优先级:
+ *  1. locationPath(AI 给的权威路径):精确命中树里某节点 → 用它;否则按**最长存在前缀**回退
+ *     (path 比树更细时,停在能确定的那一级,如 ["杭州市","滨江区某老小区","302室屋内"] 树里
+ *      只到 "302室屋内" 就用它,只到上级也接受)。
+ *  2. 无 locationPath / 它在树里完全落空:退回按 location 字符串的**收紧模糊匹配**——
+ *     仅比「本级名」和「完整路径串」,**不再拿单个祖先段去比**(那正是「302室门口」靠祖先
+ *     "杭州市" 误命中、与同深度的「302室屋内」打平后抢赢的 bug 根因)。取命中里 path 最深者。
+ */
+export function findCurrentSceneId(scenes: MemScene[], here: string, locationPath?: string[]): string {
+  const byId = new Map(scenes.map(s => [s.id, s]));
+
+  // 1) 权威路径:精确 → 最长存在前缀
+  const lp = normScenePath(locationPath);
+  if (lp.length) {
+    for (let depth = lp.length; depth >= 1; depth--) {
+      const id = sceneId(lp.slice(0, depth));
+      if (byId.has(id)) return id;
+    }
+  }
+
+  // 2) 收紧模糊匹配(兜底):只看本级名 + 完整路径串,取最深
+  const h = (here ?? '').trim();
+  if (!h) return '';
+  let best: MemScene | null = null;
+  for (const s of scenes) {
+    const hit = sceneNameReachable(s.name, h) || sceneNameReachable(s.path.join(''), h);
+    if (hit && (!best || s.path.length > best.path.length)) best = s;
+  }
+  return best?.id ?? '';
+}
+
+/** 包含式双向匹配(地名命名粗细不一时的兜底);空串不匹配。供 findCurrentSceneId 内部用。 */
+function sceneNameReachable(a: string | undefined, b: string): boolean {
+  const x = (a ?? '').trim();
+  const y = b.trim();
+  if (!x || !y) return false;
+  return x.includes(y) || y.includes(x);
 }
 
 /** 叶子 id:不绑索引、不绑内容,写入即固定 */
@@ -112,6 +159,25 @@ function applyPlacement(it: { carried?: boolean; location?: string }, src: ItemD
     if (loc) {
       it.location = loc;
       if (it.carried === undefined) it.carried = false; // 给了地点即视为非随身
+    }
+  }
+}
+
+/**
+ * 把 delta 里的随行/所在地信息施加到 NPC 上(仅在 delta 明确给了才覆盖,last-write-wins)。
+ * follow=true 时清掉 location(随行 NPC 无固定所在地);follow=false 时保留/采用 location。
+ * 与物品 applyPlacement 同构(carried↔follow)。
+ */
+function applyNpcPlacement(n: { follow?: boolean; location?: string }, src: NpcDelta): void {
+  if (typeof src.follow === 'boolean') {
+    n.follow = src.follow;
+    if (src.follow) n.location = undefined; // 随行 → 无固定所在地
+  }
+  if (typeof src.location === 'string') {
+    const loc = src.location.trim();
+    if (loc) {
+      n.location = loc;
+      if (n.follow === undefined) n.follow = false; // 给了所在地即视为定点
     }
   }
 }
@@ -228,7 +294,16 @@ function applyStoredDeltaTo(mem: BaibaiMemory, d: StoredDelta, leaf: { id: strin
 
   // 覆盖型:空串忽略
   if (typeof d.time === 'string' && d.time.trim()) mem.state.time = d.time.trim();
-  if (typeof d.location === 'string' && d.location.trim()) mem.state.location = d.location.trim();
+  if (typeof d.location === 'string' && d.location.trim()) {
+    mem.state.location = d.location.trim();
+    // location 一变,locationPath 跟随同一条 delta:AI 给了就采用,没给则清空(避免 path 比 location 旧)
+    const lp = normScenePath(d.locationPath);
+    mem.state.locationPath = lp.length ? lp : undefined;
+  } else if (d.locationPath !== undefined) {
+    // 少见:只更新 path 不动 location(手动场景);采用或清空
+    const lp = normScenePath(d.locationPath);
+    mem.state.locationPath = lp.length ? lp : undefined;
+  }
 
   // 物品(一切计数:add 默认 +1,带符号累加,数量 ≤0 自动移除)
   if (d.items) {
@@ -302,6 +377,50 @@ function applyStoredDeltaTo(mem: BaibaiMemory, d: StoredDelta, leaf: { id: strin
     for (const p of d.scenes.remove ?? []) removeScenePath(mem, p);
   }
 
+  // NPC(指令型:add 新登场 / update 改身份位置 / remove 退场)。施加序:add → update → remove。
+  if (d.npcs) {
+    for (const add of d.npcs.add ?? []) {
+      if (!add?.name?.trim()) continue;
+      const id = npcId(add.name);
+      const ex = mem.npcs.find(n => n.id === id);
+      if (ex) {
+        // 已存在:add 视作补全(仅填空,不覆盖既有),再施加位置
+        if (add.title && !ex.title) ex.title = add.title.trim();
+        if (add.desc && !ex.desc) ex.desc = add.desc.trim();
+        if (add.personality && !ex.personality) ex.personality = add.personality.trim();
+        applyNpcPlacement(ex, add);
+        ex.updatedAt = t;
+      } else {
+        const npc: BaibaiMemory['npcs'][number] = {
+          id,
+          name: add.name.trim(),
+          title: add.title?.trim() || undefined,
+          desc: add.desc?.trim() || undefined,
+          personality: add.personality?.trim() || undefined,
+          createdAt: t,
+          updatedAt: t,
+        };
+        applyNpcPlacement(npc, add);
+        mem.npcs.push(npc);
+      }
+    }
+    for (const upd of d.npcs.update ?? []) {
+      if (!upd?.name?.trim()) continue;
+      const n = mem.npcs.find(x => x.id === npcId(upd.name));
+      if (!n) continue; // 容错:更新不存在的 NPC 则忽略
+      if (upd.title) n.title = upd.title.trim();
+      if (upd.desc) n.desc = upd.desc.trim();
+      if (upd.personality) n.personality = upd.personality.trim();
+      applyNpcPlacement(n, upd); // 随行/所在地变更(NPC 移动)
+      n.updatedAt = t;
+    }
+    for (const name of d.npcs.remove ?? []) {
+      if (!name?.trim()) continue;
+      const idx = mem.npcs.findIndex(x => x.id === npcId(name));
+      if (idx >= 0) mem.npcs.splice(idx, 1);
+    }
+  }
+
   // 计划 / 悬念
   if (d.plans) {
     (d.plans.add ?? []).forEach((add, addIdx) => {
@@ -349,9 +468,9 @@ function applyStoredDeltaTo(mem: BaibaiMemory, d: StoredDelta, leaf: { id: strin
 export function deriveMemory(
   chat: STMessage[] | null,
   upToExclusive?: number,
-): Pick<BaibaiMemory, 'state' | 'items' | 'plans' | 'scenes' | 'itemLog'> {
+): Pick<BaibaiMemory, 'state' | 'items' | 'plans' | 'scenes' | 'npcs' | 'itemLog'> {
   const mem = createEmptyMemory();
-  if (!chat) return { state: mem.state, items: mem.items, plans: mem.plans, scenes: mem.scenes, itemLog: mem.itemLog };
+  if (!chat) return { state: mem.state, items: mem.items, plans: mem.plans, scenes: mem.scenes, npcs: mem.npcs, itemLog: mem.itemLog };
   const end = typeof upToExclusive === 'number' ? Math.min(upToExclusive, chat.length) : chat.length;
   for (let i = 0; i < end; i++) {
     if (!leafValid(chat[i])) continue;
@@ -362,7 +481,7 @@ export function deriveMemory(
   }
   // 只留最近若干条变动(注入/喂模型够用即可,省 token)
   if (mem.itemLog.length > ITEM_LOG_KEEP) mem.itemLog = mem.itemLog.slice(-ITEM_LOG_KEEP);
-  return { state: mem.state, items: mem.items, plans: mem.plans, scenes: mem.scenes, itemLog: mem.itemLog };
+  return { state: mem.state, items: mem.items, plans: mem.plans, scenes: mem.scenes, npcs: mem.npcs, itemLog: mem.itemLog };
 }
 
 /** 变动日志保留的最近条数(注入与喂摘要共用)。 */
@@ -491,6 +610,9 @@ export function finalizeDelta(delta: SummaryDelta, openPlansOrdered: { id: strin
   const out: StoredDelta = {};
   if (typeof delta.time === 'string' && delta.time.trim()) out.time = delta.time.trim();
   if (typeof delta.location === 'string' && delta.location.trim()) out.location = delta.location.trim();
+  // 权威定位路径:规范化后非空才固化(只有给了 location 才有意义,但不强制——手动场景可单独给)
+  const lp = normScenePath(delta.locationPath);
+  if (lp.length) out.locationPath = lp;
 
   if (delta.items) {
     const items: NonNullable<StoredDelta['items']> = {};
@@ -528,6 +650,29 @@ export function finalizeDelta(delta: SummaryDelta, openPlansOrdered: { id: strin
     if (update.length) scenes.update = update;
     if (reparent.length) scenes.reparent = reparent;
     if (Object.keys(scenes).length) out.scenes = scenes;
+  }
+
+  if (delta.npcs) {
+    // 规范化:add/update 必须有名字才保留(无名 NPC 不记)
+    const clean = (arr?: NpcDelta[]): NpcDelta[] =>
+      (arr ?? [])
+        .map(n => ({
+          name: String(n.name ?? '').trim(),
+          title: n.title?.trim() || undefined,
+          desc: n.desc?.trim() || undefined,
+          personality: n.personality?.trim() || undefined,
+          follow: typeof n.follow === 'boolean' ? n.follow : undefined,
+          location: n.location?.trim() || undefined,
+        }))
+        .filter(n => n.name);
+    const npcs: NonNullable<StoredDelta['npcs']> = {};
+    const add = clean(delta.npcs.add);
+    const update = clean(delta.npcs.update);
+    const remove = (delta.npcs.remove ?? []).map(s => String(s ?? '').trim()).filter(Boolean);
+    if (add.length) npcs.add = add;
+    if (update.length) npcs.update = update;
+    if (remove.length) npcs.remove = remove;
+    if (Object.keys(npcs).length) out.npcs = npcs;
   }
 
   if (delta.plans) {
@@ -617,6 +762,28 @@ export function appendOpToLatestLeaf(op: StoredDelta): boolean {
     if (di.update && !di.update.length) delete di.update;
     if (di.remove && !di.remove.length) delete di.remove;
   }
+  if (op.npcs) {
+    // 与物品同款跨桶互斥:同名 NPC 在 add/update 与 remove 之间不能并存,
+    // 否则改名(remove旧+add新)往返会让 remove 桶残留旧名,重放按 add→update→remove 把刚 add 的删掉。
+    const dn = (d.npcs ??= {});
+    for (const name of op.npcs.remove ?? []) {
+      const id = npcId(name);
+      if (dn.add) dn.add = dn.add.filter(a => npcId(a.name) !== id);
+      if (dn.update) dn.update = dn.update.filter(u => npcId(u.name) !== id);
+      dn.remove = [...(dn.remove ?? []).filter(n => npcId(n) !== id), name];
+    }
+    for (const a of op.npcs.add ?? []) {
+      if (dn.remove) dn.remove = dn.remove.filter(n => npcId(n) !== npcId(a.name));
+      (dn.add ??= []).push(a);
+    }
+    for (const u of op.npcs.update ?? []) {
+      if (dn.remove) dn.remove = dn.remove.filter(n => npcId(n) !== npcId(u.name));
+      (dn.update ??= []).push(u);
+    }
+    if (dn.add && !dn.add.length) delete dn.add;
+    if (dn.update && !dn.update.length) delete dn.update;
+    if (dn.remove && !dn.remove.length) delete dn.remove;
+  }
   if (op.scenes) {
     const ds = (d.scenes ??= {});
     if (op.scenes.add?.length) (ds.add ??= []).push(...op.scenes.add);
@@ -680,6 +847,76 @@ export function editItem(
   }
   // 同名:更新数量/描述/位置(update 是「设为新值」)
   return appendOpToLatestLeaf({ items: { update: [{ name: newName, qty, desc, carried, location }] } });
+}
+
+/* ============ NPC 手动 op(写回最新叶子,与 editItem 同范式) ============ */
+
+/** 手动新增一个 NPC。无有效叶子返回 false。 */
+export function upsertNpc(
+  fields: { name: string; title?: string; desc?: string; personality?: string; follow?: boolean; location?: string },
+): boolean {
+  const name = fields.name.trim();
+  if (!name) return false;
+  return appendOpToLatestLeaf({
+    npcs: {
+      add: [{
+        name,
+        title: fields.title?.trim() || undefined,
+        desc: fields.desc?.trim() || undefined,
+        personality: fields.personality?.trim() || undefined,
+        follow: fields.follow,
+        location: fields.location?.trim() || undefined,
+      }],
+    },
+  });
+}
+
+/**
+ * 手动编辑一个 NPC(派生数据,写回最新叶子的 delta),与 editItem 同范式。
+ *  - 改名:NPC id 按规范化名确定,改名等于换 id → remove(旧名) + add(新名,带全字段)。
+ *  - 仅改字段:update(按原名匹配,设为新值)。
+ * 随行/所在地(follow/location):patch 未显式给时,改名场景从派生的旧 NPC 继承(改名不丢位置)。
+ * 无有效叶子返回 false。
+ */
+export function editNpc(
+  oldName: string,
+  patch: { name?: string; title?: string; desc?: string; personality?: string; follow?: boolean; location?: string },
+): boolean {
+  const newName = patch.name?.trim() || oldName;
+  const title = patch.title?.trim() || undefined;
+  const desc = patch.desc?.trim() || undefined;
+  const personality = patch.personality?.trim() || undefined;
+
+  // 位置:patch 明确给了用 patch 的;否则从旧 NPC 继承(改名不丢所在地/随行)
+  const prev = memory.npcs.find(n => n.id === npcId(oldName));
+  const follow = patch.follow !== undefined ? patch.follow : prev?.follow;
+  const location = patch.location !== undefined ? (patch.location.trim() || undefined) : prev?.location;
+
+  if (norm(newName) !== norm(oldName)) {
+    return appendOpToLatestLeaf({
+      npcs: { remove: [oldName], add: [{ name: newName, title, desc, personality, follow, location }] },
+    });
+  }
+  return appendOpToLatestLeaf({ npcs: { update: [{ name: newName, title, desc, personality, follow, location }] } });
+}
+
+/**
+ * 切换某 NPC 的随行状态(同伴/取消同伴)。
+ *  - follow=true:标记随行(applyNpcPlacement 会清掉 location)。
+ *  - follow=false:取消随行;可选传入 location 指定「留在哪」,不传则保留原所在地。
+ */
+export function setNpcFollow(name: string, follow: boolean, location?: string): boolean {
+  const nm = name.trim();
+  if (!nm) return false;
+  const loc = follow ? undefined : (location?.trim() || undefined);
+  return appendOpToLatestLeaf({ npcs: { update: [{ name: nm, follow, location: loc }] } });
+}
+
+/** 手动删除一个 NPC(退场)。 */
+export function removeNpc(name: string): boolean {
+  const nm = name.trim();
+  if (!nm) return false;
+  return appendOpToLatestLeaf({ npcs: { remove: [nm] } });
 }
 
 /* ============ 场景手动 op(写回最新叶子,与 editItem 同范式) ============ */

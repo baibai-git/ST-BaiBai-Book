@@ -46,9 +46,11 @@ export function recomputeDerived(): void {
   const d = deriveMemory(chat);
   memory.state.time = d.state.time;
   memory.state.location = d.state.location;
+  memory.state.locationPath = d.state.locationPath;
   memory.items.splice(0, memory.items.length, ...d.items);
   memory.plans.splice(0, memory.plans.length, ...d.plans);
   memory.scenes.splice(0, memory.scenes.length, ...d.scenes);
+  memory.npcs.splice(0, memory.npcs.length, ...d.npcs);
   memory.itemLog.splice(0, memory.itemLog.length, ...d.itemLog);
 
   // derivedMeta:扫 chat 收集叶子(含陈旧)

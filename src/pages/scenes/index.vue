@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
-import { editSceneDesc, removeScene, reparentScene, upsertScene } from '@/memory/apply';
+import { editSceneDesc, findCurrentSceneId, removeScene, reparentScene, upsertScene } from '@/memory/apply';
 import { derivedMeta, memory } from '@/memory/store';
 import { getContext } from '@/st/context';
 import type { MemScene } from '@/memory/types';
@@ -61,17 +61,11 @@ interface SceneRow {
   isCollapsed: boolean;
 }
 
-// 当前所在节点:按 state.location 包含式匹配、取路径最深者(与注入端 findCurrentScene 同口径)
-const currentId = computed(() => {
-  const here = (memory.state.location || '').trim();
-  if (!here) return '';
-  let best: MemScene | null = null;
-  for (const s of memory.scenes) {
-    const hit = match(s.name, here) || s.path.some(seg => match(seg, here));
-    if (hit && (!best || s.path.length > best.path.length)) best = s;
-  }
-  return best?.id ?? '';
-});
+// 当前所在节点:与注入端共用 apply.findCurrentSceneId(优先权威 locationPath,否则收紧模糊匹配)。
+// 单一来源,保证场景页高亮 = 提示词里「当前所在」链,不再分叉。
+const currentId = computed(() =>
+  findCurrentSceneId(memory.scenes, memory.state.location || '', memory.state.locationPath),
+);
 
 // 当前所在的祖先脉络(含自身)id 集合
 const currentChain = computed(() => {

@@ -91,7 +91,7 @@ function saveEdit() {
             <span class="bbs-item-name">{{ it.name }}</span>
             <span v-if="typeof it.qty === 'number'" class="bbs-item-qty">×{{ it.qty }}</span>
             <span v-if="it.carried === false && it.location" class="bbs-item-loc">
-              <Icon name="scenes" />{{ it.location }}
+              <Icon name="scenes" /><span class="bbs-item-loc-text">{{ it.location }}</span>
             </span>
           </div>
           <span class="bbs-item-acts">
@@ -190,7 +190,8 @@ function saveEdit() {
   font-size: 14px;
   font-weight: 500;
   color: var(--bbs-ink);
-  word-break: break-word;
+  flex: 0 0 auto; /* 占自然宽度,不收缩不省略;数量紧贴其后 */
+  white-space: nowrap;
 }
 .bbs-item-qty {
   font-size: 12px;
@@ -203,7 +204,13 @@ function saveEdit() {
   gap: 3px;
   font-size: 12px;
   color: var(--bbs-ink-muted);
-  flex-shrink: 0;
+  min-width: 0; /* 长地名时本标签收缩并截断,不把物品名挤换行 */
+  flex: 1 1 auto; /* 占据名字/数量之后的剩余宽度;过长则在自身范围内省略 */
+}
+.bbs-item-loc-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .bbs-item-desc {
   font-size: 12px;
@@ -215,6 +222,18 @@ function saveEdit() {
   display: inline-flex;
   align-items: center;
   gap: 2px;
+}
+/* PC(支持 hover)上操作按钮默认隐藏,悬停整行才浮现,列表更干净;
+   触屏无 hover,保持常驻(否则手机点不出来)。 */
+@media (hover: hover) {
+  .bbs-item-acts {
+    opacity: 0;
+    transition: opacity var(--bbs-dur) var(--bbs-ease);
+  }
+  .bbs-item:hover .bbs-item-acts,
+  .bbs-item-acts:focus-within {
+    opacity: 1;
+  }
 }
 .bbs-item-act {
   display: inline-flex;

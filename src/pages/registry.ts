@@ -1,5 +1,6 @@
 import type { Component } from 'vue';
 import Items from './items/index.vue';
+import Npcs from './npcs/index.vue';
 import Scenes from './scenes/index.vue';
 import Settings from './settings/index.vue';
 import Summary from './summary/index.vue';
@@ -22,6 +23,7 @@ export const PAGES: PageDef[] = [
   { id: 'summary', label: '摘要', component: Summary },
   { id: 'items', label: '物品', component: Items },
   { id: 'scenes', label: '场景', component: Scenes },
+  { id: 'npcs', label: '角色', component: Npcs },
   { id: 'settings', label: '设置', component: Settings },
 ];
 

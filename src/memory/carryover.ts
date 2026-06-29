@@ -43,7 +43,10 @@ export interface CarryoverPlan {
 function encodeStateAsDelta(state: ReturnType<typeof deriveMemory>): StoredDelta {
   const delta: StoredDelta = {};
   if (state.state.time) delta.time = state.state.time;
-  if (state.state.location) delta.location = state.state.location;
+  if (state.state.location) {
+    delta.location = state.state.location;
+    if (state.state.locationPath?.length) delta.locationPath = state.state.locationPath;
+  }
 
   if (state.items.length) {
     delta.items = {
@@ -53,6 +56,18 @@ function encodeStateAsDelta(state: ReturnType<typeof deriveMemory>): StoredDelta
         desc: i.desc,
         carried: i.carried,
         location: i.location,
+      })),
+    };
+  }
+  if (state.npcs.length) {
+    delta.npcs = {
+      add: state.npcs.map(n => ({
+        name: n.name,
+        title: n.title,
+        desc: n.desc,
+        personality: n.personality,
+        follow: n.follow,
+        location: n.location,
       })),
     };
   }
@@ -104,7 +119,7 @@ export function computeCarryoverPlan(): CarryoverPlan {
     carryCount,
     aiCount,
     recapLen: recap.length,
-    hasData: chat.length > 0 && (carryCount > 0 || recap.length > 0 || memory.items.length > 0 || memory.plans.length > 0),
+    hasData: chat.length > 0 && (carryCount > 0 || recap.length > 0 || memory.items.length > 0 || memory.npcs.length > 0 || memory.plans.length > 0),
   };
 }
 
@@ -158,7 +173,7 @@ export async function createNewChatWithCarryover(): Promise<boolean> {
     carryMessages.push(sanitizeCarryMessage(m));
   }
 
-  if (!mergedSummary && !carryMessages.length && !seedDelta.items && !seedDelta.plans) {
+  if (!mergedSummary && !carryMessages.length && !seedDelta.items && !seedDelta.npcs && !seedDelta.plans) {
     toast('当前对话没有可携带的数据', 'warning');
     return false;
   }

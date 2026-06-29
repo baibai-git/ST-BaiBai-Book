@@ -13,13 +13,13 @@
 import { apiSettings, engineActiveHere } from '@/api/settings';
 import type { STMessage } from '@/st/context';
 import { getContext } from '@/st/context';
-import { getLeaf, leafValid } from './apply';
+import { findCurrentSceneId, getLeaf, leafValid } from './apply';
 import { fmtItems, fmtPlans, MEMORY_BRIEFING_NOTE, MEMORY_BRIEFING_END } from './prompts';
 import { memory } from './store';
 import { compactTimeLabel, formatRange, latestStoryTime, splitTimeLabel, timeTagPrompt } from './timeTag';
 import { relativeTimeLabel } from './timeRel';
 import { selectViewNodes, type ViewNode } from './select';
-import type { LeafExtra, MemScene, MemSummary } from './types';
+import type { LeafExtra, MemNpc, MemScene, MemSummary } from './types';
 
 // 摘要页列表复用同一套选择逻辑,经此 re-export(纯算法在 select.ts,零依赖、可单测)
 export { selectViewNodes, type ViewNode };
@@ -233,19 +233,14 @@ function locationReachable(itemLoc: string | undefined, here: string): boolean {
 }
 
 /**
- * 在场景树里按当前地点字符串定位「当前节点」:取名称/路径与 here 包含式匹配、且**路径最深**的节点。
+ * 在场景树里定位「当前节点」:优先 AI 给的权威 locationPath,否则按 here 收紧模糊匹配。
+ * 与场景页共用 apply.findCurrentSceneId(单一来源,杜绝页面/注入分叉),这里再把 id 解析回节点。
  * 找不到返回 null(退回纯字符串行为)。
  */
-function findCurrentScene(scenes: MemScene[], here: string): MemScene | null {
-  const h = here.trim();
-  if (!h) return null;
-  let best: MemScene | null = null;
-  for (const s of scenes) {
-    // 匹配本级名或完整路径任一段(AI 可能写「归雁客栈」也可能写「城西区归雁客栈」)
-    const hit = locationReachable(s.name, h) || s.path.some(seg => locationReachable(seg, h));
-    if (hit && (!best || s.path.length > best.path.length)) best = s;
-  }
-  return best;
+function findCurrentScene(scenes: MemScene[], here: string, locationPath?: string[]): MemScene | null {
+  const id = findCurrentSceneId(scenes, here, locationPath);
+  if (!id) return null;
+  return scenes.find(s => s.id === id) ?? null;
 }
 
 /** 回溯祖先链(由粗到细,含当前节点本身)。 */
@@ -281,9 +276,9 @@ function itemReachableInScene(itemLoc: string | undefined, here: string, chain: 
  *  - 其他去过的地点:仅列名称(完整路径名),帮 AI 复用既有命名、避免重复记录。
  * 无场景数据返回空串。
  */
-function fmtSceneContext(scenes: MemScene[], here: string): string {
+function fmtSceneContext(scenes: MemScene[], here: string, locationPath?: string[]): string {
   if (!scenes.length) return '';
-  const current = findCurrentScene(scenes, here);
+  const current = findCurrentScene(scenes, here, locationPath);
   const chain = sceneChain(scenes, current);
   const chainIds = new Set(chain.map(s => s.id));
 
@@ -304,6 +299,56 @@ function fmtSceneContext(scenes: MemScene[], here: string): string {
   return lines.join('\n');
 }
 
+/**
+ * NPC 是否「在场」:随行(follow=true)永远在场;否则按所在地与当前地点(及祖先链)可达判定。
+ * 复用物品同款 itemReachableInScene(carried↔follow、location 同义)。
+ */
+function npcOnScene(npc: MemNpc, here: string, chain: MemScene[]): boolean {
+  if (npc.follow === true) return true;
+  return itemReachableInScene(npc.location, here, chain);
+}
+
+/**
+ * 渲染 NPC 名册注入块(分两档省 token):
+ *  - 在场(随行 / 所在地落当前地点或祖先链)→ 全量:名 + 身份 + 性格 + 描述。
+ *  - 不在场 → 只发 名 + 身份(title),砍掉描述/性格这两个大头。
+ * 无 NPC 返回空串。
+ */
+function fmtNpcContext(npcs: MemNpc[], here: string, chain: MemScene[]): string {
+  if (!npcs.length) return '';
+  const present: MemNpc[] = [];
+  const absent: MemNpc[] = [];
+  for (const n of npcs) (npcOnScene(n, here, chain) ? present : absent).push(n);
+
+  const lines: string[] = [];
+  if (present.length) {
+    const detailed = present
+      .map(n => {
+        const parts = [n.name];
+        if (n.title?.trim()) parts.push(`(${n.title.trim()})`);
+        const tail: string[] = [];
+        if (n.personality?.trim()) tail.push(`性格:${n.personality.trim()}`);
+        if (n.desc?.trim()) tail.push(n.desc.trim());
+        const tailStr = tail.length ? ` —— ${tail.join(';')}` : '';
+        const place = n.follow ? ' [随行]' : '';
+        return `  - ${parts.join('')}${place}${tailStr}`;
+      })
+      .join('\n');
+    lines.push(`在场角色:\n${detailed}`);
+  }
+  if (absent.length) {
+    // 不在场:仅名 + 身份,按所在地括注;无描述/性格
+    const brief = absent
+      .map(n => {
+        const title = n.title?.trim() ? `(${n.title.trim()})` : '';
+        return `  - ${n.name}${title}${n.location ? ` [在:${n.location}]` : ''}`;
+      })
+      .join('\n');
+    lines.push(`其他已知角色(不在当前场景,仅名与身份):\n${brief}`);
+  }
+  return lines.join('\n');
+}
+
 /** 组合当前结构化状态注入文本;无有意义状态时返回空串。 */
 export function buildStateInjectionText(): string {
   const st: string[] = [];
@@ -311,10 +356,11 @@ export function buildStateInjectionText(): string {
   if (memory.state.location) st.push(`当前地点:${memory.state.location}`);
 
   const here = memory.state.location || '';
-  // 场景树:当前地点 + 祖先链(详细) + 其他地点(仅名称)。祖先链同时用于物品可达判定。
-  const sceneBlock = fmtSceneContext(memory.scenes, here);
+  const locPath = memory.state.locationPath;
+  // 场景树:当前地点 + 祖先链(详细) + 其他地点(仅名称)。祖先链同时用于物品/NPC 可达判定。
+  const sceneBlock = fmtSceneContext(memory.scenes, here, locPath);
   if (sceneBlock) st.push(`地点记忆:\n${sceneBlock}`);
-  const chain = sceneChain(memory.scenes, findCurrentScene(memory.scenes, here));
+  const chain = sceneChain(memory.scenes, findCurrentScene(memory.scenes, here, locPath));
 
   // 物品分两组省 token:可达(随身 / 存放地落在当前地点或其祖先链)发全量(名+量+描述);
   // 他处寄存的只发名+数量(砍掉描述这个大头),既省 token 又不至于让主模型以为东西没了。
@@ -330,6 +376,12 @@ export function buildStateInjectionText(): string {
   }
   // 注:近期物品变动不在此注入。改为摘要后写进对应楼层正文 </bbs_end> 之后(见 engine.ts),
   // 窗口内全文楼层天然可见、滚出窗口自然消失 —— 符合「物品变动只在那段时间有用」的取舍。
+
+  // NPC 名册:在场(随行/所在地落当前地点或祖先链)发全量(名+身份+性格+描述);
+  // 不在场只发名+身份(砍掉描述/性格),NPC 越多省得越多。
+  const npcBlock = fmtNpcContext(memory.npcs, here, chain);
+  if (npcBlock) st.push(`NPC名册:\n${npcBlock}`);
+
   const openPlans = memory.plans
     .filter(p => p.status === 'open')
     .map(p => ({ kind: p.kind, content: p.content, createdTime: p.createdTime, targetTime: p.targetTime }));
@@ -337,7 +389,7 @@ export function buildStateInjectionText(): string {
 
   // 状态块在有任何有意义内容时才注入(物品/计划即使空也会有「(无)」占位,
   // 但只要存在摘要或时间/地点就值得带上整块)
-  const hasState = memory.state.time || memory.state.location || memory.items.length || memory.scenes.length || openPlans.length;
+  const hasState = memory.state.time || memory.state.location || memory.items.length || memory.scenes.length || memory.npcs.length || openPlans.length;
   if (!hasState) return '';
   // 首尾私密简报框定,避免主模型把状态快照当成要复述/输出的模板(正文后跟吐一份状态)
   return `${MEMORY_BRIEFING_NOTE}\n[当前状态]\n${st.join('\n')}\n${MEMORY_BRIEFING_END}`;

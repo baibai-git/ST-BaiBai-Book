@@ -19,7 +19,7 @@ import { resolveVectorModel } from '@/api/settings';
 import { deriveMemory, getLeaf, leafValid } from '../apply';
 import { resolveKeepStart } from '../engine';
 import { renderHistoryNodes, selectHistoryNodesBefore } from '../inject';
-import { fmtItems, fmtPlans, QUERY_REWRITE_SYSTEM, QUERY_REWRITE_TAIL } from '../prompts';
+import { fmtItems, fmtNpcs, fmtPlans, QUERY_REWRITE_SYSTEM, QUERY_REWRITE_TAIL } from '../prompts';
 import { memory } from '../store';
 import { cleanBody } from '../timeTag';
 
@@ -55,12 +55,15 @@ function buildStateSnapshot(chat: STMessage[], upTo: number): string {
   if (st.items.length) {
     lines.push(`物品清单:\n${fmtItems(st.items.map(i => ({ name: i.name, qty: i.qty, desc: i.desc, carried: i.carried, location: i.location })))}`);
   }
+  if (st.npcs.length) {
+    lines.push(`NPC名册:\n${fmtNpcs(st.npcs.map(n => ({ name: n.name, title: n.title, follow: n.follow, location: n.location })))}`);
+  }
   const openPlans = st.plans.filter(p => p.status === 'open');
   if (openPlans.length) {
     lines.push(`未了结的计划/悬念:\n${fmtPlans(openPlans.map(p => ({ kind: p.kind, content: p.content, createdTime: p.createdTime, targetTime: p.targetTime })))}`);
   }
   if (!lines.length) return '';
-  return `[状态快照:以下为已滚出最近窗口、但仍有效的物品与未了结计划,供你解析模糊指代]\n${lines.join('\n')}`;
+  return `[状态快照:以下为已滚出最近窗口、但仍有效的物品、NPC 与未了结计划,供你解析模糊指代]\n${lines.join('\n')}`;
 }
 
 /**

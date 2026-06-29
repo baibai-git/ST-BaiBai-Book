@@ -16,6 +16,11 @@ const PATHS: Record<string, string> = {
     '<path d="M6 3.5h8.5L19 8v12.5H6z"/><path d="M14 3.5V8h4.5"/><path d="M9 12.5h6M9 16h6M9 9h2"/>',
   // 角色:人像
   characters: '<circle cx="12" cy="8" r="3.5"/><path d="M5.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/>',
+  // NPC 名册(导航):双人像,区别于单人 characters
+  npcs:
+    '<circle cx="9" cy="8" r="3"/><path d="M3.5 19.5c0-3 2.4-5 5.5-5s5.5 2 5.5 5"/><path d="M16 5.6a3 3 0 0 1 0 4.8"/><path d="M17 14.8c2.3.5 3.9 2.3 3.9 4.7"/>',
+  // 随行:图钉(标记/取消同伴)
+  pin: '<path d="M12 2.5 9 5.5l1 1L7 13l-3 .5 3.5 3.5L11 14l6.5-3 1 1 3-3-6.5-6.5z"/><path d="M5 19l3.2-3.2"/>',
   // 场景:山 + 日
   scenes:
     '<circle cx="8" cy="8" r="2"/><path d="M3.5 19.5 9 12l4 5"/><path d="M11.5 19.5 16 13.5l4.5 6"/><path d="M3.5 19.5h17"/>',

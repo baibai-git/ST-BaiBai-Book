@@ -78,6 +78,32 @@ export interface MemScene {
 }
 
 /**
+ * NPC / 角色(派生产物,不持久化)。
+ * 与物品(MemItem)同构:确定性 id `npc:${规范化名}`,重放幂等、手动 op 可稳定引用。
+ * 省 token 机制类比物品的 carried/location:
+ *  - follow=true 随行(同伴跟主角移动),永远在场全量注入;
+ *  - follow≠true 定点,仅当 location 落在当前地点或其祖先链才全量注入,否则只发名+身份。
+ * ⚠️ follow 默认 false(多数 NPC 定点),与物品 carried 默认随身相反。
+ */
+export interface MemNpc {
+  id: string;
+  /** 名字(同时作为匹配键) */
+  name: string;
+  /** 身份/职业一句话(不在场时唯一保留的信息) */
+  title?: string;
+  /** 外貌描述 */
+  desc?: string;
+  /** 简单性格 */
+  personality?: string;
+  /** 是否随行(随主角移动);省略/false=定点(按 location 匹配),true=同伴,永远在场 */
+  follow?: boolean;
+  /** 定点时的所在地(故事内地名);follow≠true 时用于与当前地点匹配 */
+  location?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
  * 计划 / 悬念(派生产物,不持久化)。
  * id 确定性:`plan:${产生它的叶子id}#${在该叶子 add 数组里的序号}`。
  */
@@ -156,8 +182,14 @@ export interface MemSummary {
 export interface MemState {
   /** 故事内当前时间 */
   time: string;
-  /** 当前地点 */
+  /** 当前地点(自由字符串,可任意细:如「杭州市滨江区某老小区-302室屋内」) */
   location: string;
+  /**
+   * 当前所在的「已记录场景节点」完整路径(由粗到细,如 ["杭州市","滨江区某老小区","302室屋内"])。
+   * 由 AI 在改 location 时顺带给出,作权威定位连接 —— 解决 location 自由串与场景树的粒度错配。
+   * 可比 location 粗(只指到上级);缺省/找不到时,定位退回按 location 的收紧模糊匹配。
+   */
+  locationPath?: string[];
 }
 
 /**
@@ -175,6 +207,8 @@ export interface BaibaiMemory {
   plans: MemPlan[];
   /** 派生缓存:走过的地点(地理嵌套树,从叶子 delta 重放) */
   scenes: MemScene[];
+  /** 派生缓存:登场过的 NPC(从叶子 delta 重放) */
+  npcs: MemNpc[];
   /** 派生缓存:近期物品变动日志(重放时产出,只留最近若干条) */
   itemLog: ItemLogEntry[];
   /** 真源:叶子摘要森林 */
@@ -188,6 +222,7 @@ export function createEmptyMemory(): BaibaiMemory {
     items: [],
     plans: [],
     scenes: [],
+    npcs: [],
     itemLog: [],
     summaries: [],
   };
@@ -203,6 +238,21 @@ export interface ItemDelta {
   /** 是否随身(角色带在身上)。省略=随身;明确放在某地点的物品填 false */
   carried?: boolean;
   /** 非随身时的存放地点(故事内地名) */
+  location?: string;
+}
+
+/** NPC 指令里单个角色的形状(AI / 手动共用) */
+export interface NpcDelta {
+  name: string;
+  /** 身份/职业一句话 */
+  title?: string;
+  /** 外貌描述 */
+  desc?: string;
+  /** 简单性格 */
+  personality?: string;
+  /** 是否随行(随主角移动)。省略=定点;明确随主角同行的同伴填 true */
+  follow?: boolean;
+  /** 定点时的所在地(故事内地名) */
   location?: string;
 }
 
@@ -239,6 +289,8 @@ export interface SummaryDelta {
   timeEnd?: string;
   /** 覆盖型:当前地点(直接写新值) */
   location?: string;
+  /** 覆盖型:当前所在的已记录场景节点完整路径(由粗到细);与 location 同时给,作权威定位 */
+  locationPath?: string[];
   /** 指令型:物品增删改 */
   items?: {
     add?: ItemDelta[];
@@ -255,6 +307,15 @@ export interface SummaryDelta {
     update?: SceneDelta[];
     /** 重设父级:给已有节点加父 / 插入中间节点 / 换父(连子树平移) */
     reparent?: SceneReparent[];
+  };
+  /** 指令型:NPC 增删改 */
+  npcs?: {
+    /** 新登场/新记录的 NPC */
+    add?: NpcDelta[];
+    /** 按名字更新已有 NPC(身份/描述/性格/随行/所在地) */
+    update?: NpcDelta[];
+    /** 按名字移除(永久退场/死亡) */
+    remove?: string[];
   };
   /** 指令型:计划/悬念增删 */
   plans?: {
@@ -274,6 +335,8 @@ export interface SummaryDelta {
 export interface StoredDelta {
   time?: string;
   location?: string;
+  /** 覆盖型:当前所在的已记录场景节点完整路径(由粗到细);权威定位 */
+  locationPath?: string[];
   items?: {
     add?: ItemDelta[];
     update?: ItemDelta[];
@@ -287,6 +350,12 @@ export interface StoredDelta {
     reparent?: SceneReparent[];
     /** 内部/手动:按完整路径移除(连带删其后代) */
     remove?: string[][];
+  };
+  npcs?: {
+    add?: NpcDelta[];
+    update?: NpcDelta[];
+    /** 按 NPC 名移除(规范化匹配) */
+    remove?: string[];
   };
   plans?: {
     add?: { kind: 'plan' | 'suspense'; content: string; createdTime?: string; targetTime?: string }[];
