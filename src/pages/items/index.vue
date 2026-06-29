@@ -79,19 +79,21 @@ function saveEdit() {
 
     <div v-if="memory.items.length" class="bbs-item-list">
       <div v-for="it in memory.items" :key="it.id" class="bbs-item">
-        <div class="bbs-item-main">
-          <span class="bbs-item-name">{{ it.name }}</span>
-          <span v-if="typeof it.qty === 'number'" class="bbs-item-qty">×{{ it.qty }}</span>
+        <div class="bbs-item-head">
+          <div class="bbs-item-main">
+            <span class="bbs-item-name">{{ it.name }}</span>
+            <span v-if="typeof it.qty === 'number'" class="bbs-item-qty">×{{ it.qty }}</span>
+          </div>
+          <span class="bbs-item-acts">
+            <button class="bbs-item-act" type="button" title="编辑" @click="openEdit(it.id)">
+              <Icon name="edit" />
+            </button>
+            <button class="bbs-item-act bbs-item-del" type="button" title="删除" @click="removeItem(it.id)">
+              <Icon name="close" />
+            </button>
+          </span>
         </div>
         <span v-if="it.desc" class="bbs-item-desc">{{ it.desc }}</span>
-        <span class="bbs-item-acts">
-          <button class="bbs-item-act" type="button" title="编辑" @click="openEdit(it.id)">
-            <Icon name="edit" />
-          </button>
-          <button class="bbs-item-act bbs-item-del" type="button" title="删除" @click="removeItem(it.id)">
-            <Icon name="close" />
-          </button>
-        </span>
       </div>
     </div>
 
@@ -147,34 +149,43 @@ function saveEdit() {
 }
 .bbs-item {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 4px;
   padding: 10px 12px;
   border: 1px solid var(--bbs-line);
   border-radius: var(--bbs-radius);
   background: var(--bbs-surface);
 }
+.bbs-item-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .bbs-item-main {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  min-width: 0; /* 允许长名字在 flex 内收缩换行,不挤压操作按钮 */
+  flex: 1;
 }
 .bbs-item-name {
   font-size: 14px;
   font-weight: 500;
   color: var(--bbs-ink);
+  word-break: break-word;
 }
 .bbs-item-qty {
   font-size: 12px;
   color: var(--bbs-accent);
+  flex-shrink: 0;
 }
 .bbs-item-desc {
   font-size: 12px;
   color: var(--bbs-ink-muted);
-  flex: 1;
+  word-break: break-word;
 }
 .bbs-item-acts {
-  margin-left: auto;
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   gap: 2px;
