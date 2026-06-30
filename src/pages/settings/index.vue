@@ -2116,9 +2116,18 @@ function scorePct(score: number): number {
 .bbs-vec-ep.is-collapsed .bbs-vec-ep-outer {
   grid-template-rows: 0fr;
 }
+/* 展开态放开 overflow,否则会裁掉里面模型 combobox 绝对定位的下拉菜单(拉取模型后「点不开」);
+   折叠动画期间仍需 hidden 来平滑揭示——用离散过渡延迟到动画结束(0.28s)才切 visible,收起时立即变回 hidden。
+   allow-discrete 不支持的旧浏览器降级为立即切换:展开瞬间内容略溢出(小瑕疵),但下拉可用,不再点不开。 */
 .bbs-vec-ep-inner {
   min-height: 0;
+  overflow: visible;
+  transition: overflow 0s var(--bbs-dur);
+  transition-behavior: allow-discrete;
+}
+.bbs-vec-ep.is-collapsed .bbs-vec-ep-inner {
   overflow: hidden;
+  transition-delay: 0s;
 }
 /* 向量后端类型标签:与摘要列表的「总结」标签同款(实心填充、白字),后端=强调色,本地降级=警告色 */
 .bbs-vec-backend {
