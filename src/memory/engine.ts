@@ -8,7 +8,7 @@ import { toast } from '@/st/toast';
 import { addSummary, deriveMemory, finalizeDelta, getLeaf, itemChangesOf, leafValid, makeLeafId, pruneBrokenComps, syncItemLogFromMessage } from './apply';
 import { extractJsonObject } from './json';
 import { clearInjection, refreshInjection, renderHistoryNodes, selectHistoryNodesBefore } from './inject';
-import { buildBatchSummaryPrompt, buildBatchThinking, buildCharCardSystem, buildResummaryPrompt, buildSummaryPrompt, buildWorldInfoSystem, fmtItemLogInline, JAILBREAK_PROMPT, selectRecentResolvedPlans, THINKING_CHECKLIST, THINKING_PREFILL } from './prompts';
+import { buildBatchSummaryPrompt, buildBatchThinking, buildCharCardSystem, buildPersonaSystem, buildResummaryPrompt, buildSummaryPrompt, buildWorldInfoSystem, fmtItemLogInline, JAILBREAK_PROMPT, selectRecentResolvedPlans, THINKING_CHECKLIST, THINKING_PREFILL } from './prompts';
 import { clampToTimeTags, cleanBody, parseTimeRange, syncTimeTagRegex, writeItemLogTag } from './timeTag';
 import { memory, recomputeDerived, scheduleLeafFlush } from './store';
 import type { LeafExtra, SummaryDelta } from './types';
@@ -148,6 +148,20 @@ function fetchCharCard(): string {
     if (t) parts.push(`【${label}】\n${t}`);
   }
   return parts.join('\n\n').trim();
+}
+
+/**
+ * 取当前用户人设(persona / 用户设定)。
+ * 走 ST 稳定宏 {{persona}}(= power_user.persona_description),substituteParams 展开即得;
+ * 不去翻 power_user 全局,保持「只通过 context 接触宿主」。
+ * 用途:摘要副API原本只知道角色卡({{char}} 一方),不知道主角({{user}})是谁,
+ * 写 summary、判断「NPC 与 user 的互动」时缺一块。带上 persona 补齐这一侧。
+ * 群聊同样适用(persona 独立于角色,不按 groupId 早退);未设置 persona / 取不到 → 空串(降级)。
+ */
+function fetchUserPersona(): string {
+  const ctx = getContext();
+  if (!ctx || typeof ctx.substituteParams !== 'function') return '';
+  return ctx.substituteParams('{{persona}}').trim();
 }
 
 /**
@@ -663,6 +677,7 @@ async function summarizeFloorWork(
 
   const worldInfo = await fetchWorldInfo(chat, targets, ctx.name1, ctx.name2);
   const charCard = fetchCharCard();
+  const persona = fetchUserPersona();
 
   const openPlansOrdered = stateBefore.plans.filter(p => p.status === 'open');
   const prompt = buildSummaryPrompt({
@@ -686,6 +701,7 @@ async function summarizeFloorWork(
   const jb = apiSettings.prompts.jailbreak.trim() || JAILBREAK_PROMPT;
   if (jb) messages.push({ role: 'system', content: jb });
   if (charCard) messages.push({ role: 'system', content: buildCharCardSystem(charCard) });
+  if (persona) messages.push({ role: 'system', content: buildPersonaSystem(persona) });
   if (worldInfo) messages.push({ role: 'system', content: buildWorldInfoSystem(worldInfo) });
   messages.push(
     { role: 'user', content: prompt },
@@ -821,6 +837,7 @@ async function summarizeBatchWork(
   // 世界书按整块合并正文激活一次(省去逐楼激活)
   const worldInfo = await fetchWorldInfo(chat, allTargets, ctx.name1, ctx.name2);
   const charCard = fetchCharCard();
+  const persona = fetchUserPersona();
 
   const prompt = buildBatchSummaryPrompt({
     user: ctx.name1,
@@ -837,6 +854,7 @@ async function summarizeBatchWork(
   const jb = apiSettings.prompts.jailbreak.trim() || JAILBREAK_PROMPT;
   if (jb) messages.push({ role: 'system', content: jb });
   if (charCard) messages.push({ role: 'system', content: buildCharCardSystem(charCard) });
+  if (persona) messages.push({ role: 'system', content: buildPersonaSystem(persona) });
   if (worldInfo) messages.push({ role: 'system', content: buildWorldInfoSystem(worldInfo) });
   messages.push(
     { role: 'user', content: prompt },

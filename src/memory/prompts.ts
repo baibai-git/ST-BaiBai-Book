@@ -757,6 +757,18 @@ export function buildResummaryPrompt(
   });
 }
 
+/**
+ * 把用户人设(persona)包成独立 system 消息(摘要需据此理解「主角是谁」,
+ * 正确写 summary、判断 NPC 与主角的互动)。空人设时调用方应跳过。
+ * 字段已由调用方(fetchUserPersona)展开宏;这里只描述它是「主角本人设定」,与角色卡区分。
+ */
+export function buildPersonaSystem(persona: string): string {
+  return `【主角设定(用户操控的主角本人设定,只读参考)】
+以下是主角(即对话里的"用户/User"一方)本人的人物设定,用于帮助你理解主角的身份言行;它不是本轮发生的事,不要写进 summary。
+
+${persona.trim()}`;
+}
+
 /** 把世界书设定包成独立 system 消息的内容(空设定时调用方应跳过) */
 export function buildWorldInfoSystem(worldInfo: string): string {
   return `【世界设定(世界书激活的相关设定,只读参考)】
