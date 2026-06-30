@@ -3,7 +3,7 @@ import Icon from '@/components/Icon.vue';
 import NavBar from '@/components/NavBar.vue';
 import FloatingOrb from '@/components/FloatingOrb.vue';
 import { getPage } from '@/pages/registry';
-import { closeBook, cycleTheme, lastOpenedAt, THEMES, ui } from '@/state/ui';
+import { closeBook, cycleTheme, lastOpenedAt, modalHost, THEMES, ui } from '@/state/ui';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 
 // 题首主题按钮:显示「下一个」主题的图标与名,点击即切换到它
@@ -85,6 +85,9 @@ const windowStyle = computed(() => {
 
 <template>
   <div class="bbs-root" :data-theme="ui.theme">
+    <!-- 弹窗 Teleport 宿主:.bbs-root 直接子级,在 .bbs-body 滚动容器之外。
+         各页弹窗 Teleport 到此,避开 iOS「可滚动祖先内 fixed 后代定位错乱」(详见 state/ui.ts)。 -->
+    <div ref="modalHost"></div>
     <!-- 悬浮球:留在 shadow 内才能用 --bbs-* 主题变量;自身 position:fixed 贴边,不受 host 影响 -->
     <FloatingOrb v-if="ui.showOrb" />
     <Transition name="bbs-fade">

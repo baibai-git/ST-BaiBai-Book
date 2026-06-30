@@ -1,5 +1,13 @@
 import { apiSettings, onSettingsReady } from '@/api/settings';
-import { reactive, watch } from 'vue';
+import { reactive, ref, watch } from 'vue';
+
+/**
+ * 弹窗 Teleport 宿主:由 App.vue 挂在 .bbs-root 的直接子级(在 .bbs-body 滚动容器之外)。
+ * 所有 .bbs-modal-mask 弹窗都 Teleport 到这里,避开 iOS Safari 的老问题——
+ * 「可滚动祖先内的 position:fixed 后代」会相对滚动内容而非视口定位,设置页滚动后弹窗顶出屏幕。
+ * 仍在 shadow root 内,scoped 样式与 --bbs-* 主题变量照常生效(故不能用 Teleport to="body")。
+ */
+export const modalHost = ref<HTMLElement | null>(null);
 
 /** 导航位置:auto = PC 顶部、移动端底部 */
 export type NavPosition = 'top' | 'bottom' | 'auto';

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
+import ModalMask from '@/components/ModalMask.vue';
 import { editNpc, removeNpc, setNpcFollow, setNpcImportant, upsertNpc } from '@/memory/apply';
 import { derivedMeta, memory } from '@/memory/store';
 import type { MemNpc, MemScene } from '@/memory/types';
@@ -327,7 +328,7 @@ function confirmRemove() {
     </div>
 
     <!-- 添加弹窗:position:fixed 内联(不用 Teleport,见 base.css 说明) -->
-    <div v-if="composerOpen" class="bbs-modal-mask" @click.self="closeComposer">
+    <ModalMask v-if="composerOpen" @close="closeComposer">
       <div class="bbs-modal" role="dialog" aria-modal="true" aria-label="添加角色">
         <header class="bbs-modal-head">
           <span class="bbs-modal-title">添加角色</span>
@@ -374,10 +375,10 @@ function confirmRemove() {
           <button class="bbs-btn bbs-btn-primary" type="button" :disabled="!draft.name.trim()" @click="addNpc">添加</button>
         </footer>
       </div>
-    </div>
+    </ModalMask>
 
     <!-- 编辑弹窗 -->
-    <div v-if="editing" class="bbs-modal-mask" @click.self="cancelEdit">
+    <ModalMask v-if="editing" @close="cancelEdit">
       <div class="bbs-modal" role="dialog" aria-modal="true" aria-label="编辑角色">
         <header class="bbs-modal-head">
           <span class="bbs-modal-title">编辑角色</span>
@@ -424,7 +425,7 @@ function confirmRemove() {
           <button class="bbs-btn bbs-btn-primary" type="button" :disabled="!editing.name.trim()" @click="saveEdit">保存</button>
         </footer>
       </div>
-    </div>
+    </ModalMask>
 
     <ConfirmDialog
       :open="!!removing"

@@ -2,6 +2,7 @@
 import Collapsible from '@/components/Collapsible.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import Icon from '@/components/Icon.vue';
+import ModalMask from '@/components/ModalMask.vue';
 import { fetchModels, testChannel } from '@/api/client';
 import { apiSettings, newChannel, resolveVectorModel, sanitizeTagName, type ApiChannel } from '@/api/settings';
 import { getContext } from '@/st/context';
@@ -1288,7 +1289,7 @@ function scorePct(score: number): number {
     </ConfirmDialog>
 
     <!-- ===== 渠道编辑弹窗 ===== -->
-    <div v-if="editingChannel" class="bbs-modal-mask" @click.self="closeChannel">
+    <ModalMask v-if="editingChannel" @close="closeChannel">
       <div class="bbs-modal" role="dialog" aria-modal="true" aria-label="编辑渠道">
         <header class="bbs-modal-head">
           <span class="bbs-modal-title">编辑渠道</span>
@@ -1419,10 +1420,10 @@ function scorePct(score: number): number {
       >
         确定删除渠道「{{ editingChannel.name || '未命名渠道' }}」吗?此操作不可撤销,已指派该渠道的任务会被清空。
       </ConfirmDialog>
-    </div>
+    </ModalMask>
 
     <!-- ===== 提示词编辑弹窗 ===== -->
-    <div v-if="editingPrompt" class="bbs-modal-mask" @click.self="closePrompt">
+    <ModalMask v-if="editingPrompt" @close="closePrompt">
       <div class="bbs-modal bbs-modal-wide" role="dialog" aria-modal="true" :aria-label="`编辑${editingPrompt.label}`">
         <header class="bbs-modal-head">
           <span class="bbs-modal-title">编辑{{ editingPrompt.label }}</span>
@@ -1463,10 +1464,10 @@ function scorePct(score: number): number {
           <button class="bbs-btn bbs-btn-primary" type="button" @click="savePrompt">完成</button>
         </footer>
       </div>
-    </div>
+    </ModalMask>
 
     <!-- ===== 排除角色弹窗:搜索 + 勾选列表 ===== -->
-    <div v-if="excludeOpen" class="bbs-modal-mask" @click.self="closeExclude">
+    <ModalMask v-if="excludeOpen" @close="closeExclude">
       <div class="bbs-modal" role="dialog" aria-modal="true" aria-label="编辑排除名单">
         <header class="bbs-modal-head">
           <span class="bbs-modal-title">排除角色</span>
@@ -1501,7 +1502,7 @@ function scorePct(score: number): number {
           <button class="bbs-btn bbs-btn-primary" type="button" @click="closeExclude">完成</button>
         </footer>
       </div>
-    </div>
+    </ModalMask>
 
     <!-- ===== 更新确认弹窗 ===== -->
     <ConfirmDialog

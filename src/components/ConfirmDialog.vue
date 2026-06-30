@@ -3,10 +3,12 @@
  * 通用确认弹窗。替代浏览器原生 confirm()——原生弹窗在 Shadow DOM 外、样式不统一。
  * 受控:用 v-model:open 控制显隐;点确定 emit confirm,点取消/遮罩/关闭 emit cancel。
  *
- * 不用 Teleport:内容须留在 shadow root 内才能拿到 scoped 样式与 --bbs-* 变量
- * (见 base.css 通用弹窗注释)。基础 .bbs-modal* 样式是全局的,这里只补确认弹窗特有的。
+ * Teleport 到 modalHost(.bbs-root 直接子级,在 .bbs-body 滚动容器之外):
+ * 避开 iOS「可滚动祖先内 fixed 后代定位错乱」。宿主仍在 shadow root 内,
+ * scoped 样式与 --bbs-* 变量照常生效——故 to 的是 shadow 内元素,而非 Teleport to="body"。
  */
 import Icon from '@/components/Icon.vue';
+import { modalHost } from '@/state/ui';
 
 withDefaults(
   defineProps<{
@@ -54,35 +56,37 @@ function confirm() {
 </script>
 
 <template>
-  <div
-    v-if="open"
-    class="bbs-modal-mask"
-    :class="{ 'bbs-modal-mask-top': topLayer }"
-    @click.self="cancel"
-  >
-    <div class="bbs-modal bbs-modal-confirm" role="dialog" aria-modal="true" :aria-label="title">
-      <header class="bbs-modal-head">
-        <span class="bbs-modal-title">{{ title }}</span>
-      </header>
-      <p class="bbs-confirm-text">
-        <slot />
-      </p>
-      <footer class="bbs-modal-foot">
-        <span class="bbs-modal-foot-spacer"></span>
-        <button class="bbs-btn" type="button" @click="cancel">{{ cancelText }}</button>
-        <button
-          class="bbs-btn"
-          :class="tone === 'danger' ? 'bbs-btn-danger' : 'bbs-btn-primary'"
-          type="button"
-          :disabled="busy"
-          @click="confirm"
-        >
-          <Icon v-if="confirmIcon" :name="confirmIcon" />
-          {{ busy && busyText ? busyText : confirmText }}
-        </button>
-      </footer>
+  <Teleport :to="modalHost" :disabled="!modalHost">
+    <div
+      v-if="open"
+      class="bbs-modal-mask"
+      :class="{ 'bbs-modal-mask-top': topLayer }"
+      @click.self="cancel"
+    >
+      <div class="bbs-modal bbs-modal-confirm" role="dialog" aria-modal="true" :aria-label="title">
+        <header class="bbs-modal-head">
+          <span class="bbs-modal-title">{{ title }}</span>
+        </header>
+        <p class="bbs-confirm-text">
+          <slot />
+        </p>
+        <footer class="bbs-modal-foot">
+          <span class="bbs-modal-foot-spacer"></span>
+          <button class="bbs-btn" type="button" @click="cancel">{{ cancelText }}</button>
+          <button
+            class="bbs-btn"
+            :class="tone === 'danger' ? 'bbs-btn-danger' : 'bbs-btn-primary'"
+            type="button"
+            :disabled="busy"
+            @click="confirm"
+          >
+            <Icon v-if="confirmIcon" :name="confirmIcon" />
+            {{ busy && busyText ? busyText : confirmText }}
+          </button>
+        </footer>
+      </div>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <style scoped>

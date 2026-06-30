@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
+import ModalMask from '@/components/ModalMask.vue';
 import { editSceneDesc, findCurrentSceneId, removeScene, reparentScene, upsertScene } from '@/memory/apply';
 import { derivedMeta, memory } from '@/memory/store';
 import { getContext } from '@/st/context';
@@ -323,7 +324,7 @@ const removeChildCount = computed(() => {
     </div>
 
     <!-- 添加弹窗:选上级(已有地点 / 顶级)+ 填新名 + 描述 -->
-    <div v-if="composerOpen" class="bbs-modal-mask" @click.self="closeComposer">
+    <ModalMask v-if="composerOpen" @close="closeComposer">
       <div class="bbs-modal" role="dialog" aria-modal="true" aria-label="添加地点">
         <header class="bbs-modal-head">
           <span class="bbs-modal-title">添加地点</span>
@@ -351,10 +352,10 @@ const removeChildCount = computed(() => {
           <button class="bbs-btn bbs-btn-primary" type="button" :disabled="!newName.trim() || !newDesc.trim()" @click="addScene">添加</button>
         </footer>
       </div>
-    </div>
+    </ModalMask>
 
-    <!-- 编辑弹窗:position:fixed 内联(不用 Teleport,见 base.css 说明) -->
-    <div v-if="editing" class="bbs-modal-mask" @click.self="cancelEdit">
+    <!-- 编辑弹窗:Teleport 出滚动容器,见 ModalMask -->
+    <ModalMask v-if="editing" @close="cancelEdit">
       <div class="bbs-modal" role="dialog" aria-modal="true" aria-label="编辑地点">
         <header class="bbs-modal-head">
           <span class="bbs-modal-title">编辑地点</span>
@@ -383,7 +384,7 @@ const removeChildCount = computed(() => {
           <button class="bbs-btn bbs-btn-primary" type="button" :disabled="!editing.name.trim() || !editing.desc.trim()" @click="saveEdit">保存</button>
         </footer>
       </div>
-    </div>
+    </ModalMask>
 
     <ConfirmDialog
       :open="!!removing"

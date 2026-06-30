@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
+import ModalMask from '@/components/ModalMask.vue';
 import { appendOpToLatestLeaf, deleteLeafAt, deleteSummary, editLeafAt, editPlan, editSummary } from '@/memory/apply';
 import { apiSettings } from '@/api/settings';
 import { batchBackfill, batchState, cancelBatchBackfill, engineState, resummarizeNow, summarizeFloor } from '@/memory/engine';
@@ -39,6 +40,31 @@ function closeComposer() {
 // 计划/悬念只展示「进行中」。点删除即移除——不再有「了结/已了结」概念。
 const openPlans = computed(() => memory.plans.filter(p => p.status === 'open'));
 const hasLeaf = computed(() => derivedMeta.hasLeaf);
+
+/* —— 悬念簿折叠 ——
+ * 计划/悬念攒多了,整段很长,要滚很久才到下方的摘要。标题行兼作折叠开关。
+ * 折叠态是本机视图偏好(同 activePage 那类临时导航态),走 localStorage、不进 apiSettings——
+ * 跨设备同步它没意义,且不该污染真·设置。 */
+const SUSPENSE_COLLAPSE_KEY = 'bbs.ui.suspenseCollapsed.v1';
+const suspenseCollapsed = ref(loadSuspenseCollapsed());
+function loadSuspenseCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SUSPENSE_COLLAPSE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+function toggleSuspense() {
+  suspenseCollapsed.value = !suspenseCollapsed.value;
+  try {
+    localStorage.setItem(SUSPENSE_COLLAPSE_KEY, suspenseCollapsed.value ? '1' : '0');
+  } catch {
+    /* localStorage 不可用时仅本次会话生效 */
+  }
+}
+// 没有计划/悬念就无可折叠:不显示箭头,也强制展开(避免删空后卡在收拢的空态)
+const suspenseFoldable = computed(() => openPlans.value.length > 0);
+const suspenseShown = computed(() => !suspenseCollapsed.value || !suspenseFoldable.value);
 
 // 叶子 id → 创建楼层。计划 id 形如 `plan:${叶子id}#${序号}`,由此反查创建该计划/悬念
 // 时所在楼层(与摘要列表的 #楼层 同源)。手动添加的计划挂在最新叶子上,显示其楼层。
@@ -357,8 +383,21 @@ function saveEdit() {
 <template>
   <section class="bbs-page">
     <!-- ===== 悬念簿 ===== -->
+    <!-- 标题行兼作折叠开关:点标题/箭头收展;右侧「+」独立,stop 冒泡避免误触折叠 -->
     <div class="bbs-section-head">
-      <h2 class="bbs-title bbs-title-sub">悬念簿</h2>
+      <button
+        class="bbs-fold-head"
+        type="button"
+        :class="{ 'is-static': !suspenseFoldable }"
+        :disabled="!suspenseFoldable"
+        :aria-expanded="suspenseShown"
+        :title="suspenseFoldable ? (suspenseShown ? '收起悬念簿' : '展开悬念簿') : ''"
+        @click="toggleSuspense"
+      >
+        <Icon v-if="suspenseFoldable" name="chevron" class="bbs-fold-caret" :class="{ 'is-collapsed': !suspenseShown }" />
+        <h2 class="bbs-title bbs-title-sub">悬念簿</h2>
+        <span v-if="suspenseFoldable" class="bbs-fold-count">计 {{ openPlans.length }} 条</span>
+      </button>
       <button
         class="bbs-add-mini"
         type="button"
@@ -370,25 +409,30 @@ function saveEdit() {
       </button>
     </div>
 
-    <div v-if="openPlans.length" class="bbs-plan-group">
-      <div v-for="p in openPlans" :key="p.id" class="bbs-plan">
-        <div class="bbs-plan-head">
-          <span class="bbs-plan-kind" :class="p.kind">{{ p.kind === 'suspense' ? '悬念' : '计划' }}</span>
-          <span v-if="planFloor(p.id) !== undefined" class="bbs-plan-floor">#{{ planFloor(p.id) }}</span>
-          <span class="bbs-plan-acts">
-            <button class="bbs-plan-act" type="button" title="编辑" @click="openPlanEdit(p)"><Icon name="edit" /></button>
-            <button class="bbs-plan-act bbs-plan-del" type="button" title="删除" @click="removePlan(p.id)"><Icon name="close" /></button>
-          </span>
+    <!-- grid 1fr↔0fr 收展:高度自适应、无需写死 max-height;reduced-motion 下瞬切(见样式) -->
+    <div class="bbs-fold-wrap" :class="{ 'is-collapsed': !suspenseShown }">
+      <div class="bbs-fold-inner">
+        <div v-if="openPlans.length" class="bbs-plan-group">
+          <div v-for="p in openPlans" :key="p.id" class="bbs-plan">
+            <div class="bbs-plan-head">
+              <span class="bbs-plan-kind" :class="p.kind">{{ p.kind === 'suspense' ? '悬念' : '计划' }}</span>
+              <span v-if="planFloor(p.id) !== undefined" class="bbs-plan-floor">#{{ planFloor(p.id) }}</span>
+              <span class="bbs-plan-acts">
+                <button class="bbs-plan-act" type="button" title="编辑" @click="openPlanEdit(p)"><Icon name="edit" /></button>
+                <button class="bbs-plan-act bbs-plan-del" type="button" title="删除" @click="removePlan(p.id)"><Icon name="close" /></button>
+              </span>
+            </div>
+            <p class="bbs-plan-content">{{ p.content }}</p>
+            <!-- 故事内时间:立于(创建时间)/ 目标(目标时间),任一存在才显示 -->
+            <div v-if="p.createdTime || p.targetTime" class="bbs-plan-times">
+              <span v-if="p.createdTime" class="bbs-plan-time">立于 {{ p.createdTime }}</span>
+              <span v-if="p.targetTime" class="bbs-plan-time bbs-plan-time-target">目标 {{ p.targetTime }}</span>
+            </div>
+          </div>
         </div>
-        <p class="bbs-plan-content">{{ p.content }}</p>
-        <!-- 故事内时间:立于(创建时间)/ 目标(目标时间),任一存在才显示 -->
-        <div v-if="p.createdTime || p.targetTime" class="bbs-plan-times">
-          <span v-if="p.createdTime" class="bbs-plan-time">立于 {{ p.createdTime }}</span>
-          <span v-if="p.targetTime" class="bbs-plan-time bbs-plan-time-target">目标 {{ p.targetTime }}</span>
-        </div>
+        <p v-else class="bbs-plan-empty">还没有计划或悬念。摘要时会自动捕捉,也可手动添加。</p>
       </div>
     </div>
-    <p v-else class="bbs-plan-empty">还没有计划或悬念。摘要时会自动捕捉,也可手动添加。</p>
 
     <!-- 分章分隔:两侧细线 + 居中金色菱形(古籍分章鱼尾标记),比普通 hr 更明确地隔开两区 -->
     <div class="bbs-divider" role="separator" aria-hidden="true">
@@ -528,7 +572,7 @@ function saveEdit() {
     </div>
 
     <!-- ===== 添加计划 / 悬念弹窗 ===== -->
-    <div v-if="composerOpen" class="bbs-modal-mask" @click.self="closeComposer">
+    <ModalMask v-if="composerOpen" @close="closeComposer">
       <div class="bbs-modal" role="dialog" aria-modal="true" aria-label="添加计划或悬念">
         <header class="bbs-modal-head">
           <span class="bbs-modal-title">添加计划 / 悬念</span>
@@ -567,10 +611,10 @@ function saveEdit() {
           <button class="bbs-btn bbs-btn-primary" type="button" :disabled="!newContent.trim()" @click="addPlan">添加</button>
         </footer>
       </div>
-    </div>
+    </ModalMask>
 
     <!-- ===== 编辑计划 / 悬念弹窗 ===== -->
-    <div v-if="editingPlan" class="bbs-modal-mask" @click.self="cancelPlanEdit">
+    <ModalMask v-if="editingPlan" @close="cancelPlanEdit">
       <div class="bbs-modal" role="dialog" aria-modal="true" aria-label="编辑计划或悬念">
         <header class="bbs-modal-head">
           <span class="bbs-modal-title">编辑{{ editingPlan.kind === 'suspense' ? '悬念' : '计划' }}</span>
@@ -593,14 +637,10 @@ function saveEdit() {
           <button class="bbs-btn bbs-btn-primary" type="button" :disabled="!editingPlan.content.trim()" @click="savePlanEdit">保存</button>
         </footer>
       </div>
-    </div>
+    </ModalMask>
 
     <!-- ===== 编辑弹窗 ===== -->
-    <!-- 不用 Teleport:Teleport to="body" 会把弹窗送到 shadow root 之外的 light DOM,
-         那里既拿不到本组件的 scoped 样式、也拿不到 --bbs-* 主题变量(变量定义在 shadow
-         内的 .bbs-root 上),导致弹窗无样式、被遮罩盖住(PC)甚至完全不可见(移动端)。
-         弹窗本身 position:fixed,直接内联渲染即可覆盖全窗,且样式/变量都正常生效。 -->
-    <div v-if="editing" class="bbs-modal-mask" @click.self="cancelEdit">
+    <ModalMask v-if="editing" @close="cancelEdit">
       <div class="bbs-modal" role="dialog" aria-modal="true" :aria-label="editing.kind === 'comp' ? '编辑总结' : '编辑摘要'">
         <header class="bbs-modal-head">
           <span class="bbs-modal-title">
@@ -628,7 +668,7 @@ function saveEdit() {
           <button class="bbs-btn bbs-btn-primary" type="button" @click="saveEdit">保存</button>
         </footer>
       </div>
-    </div>
+    </ModalMask>
   </section>
 </template>
 
@@ -651,6 +691,71 @@ function saveEdit() {
   gap: 4px;
 }
 /* .bbs-section-head / .bbs-add-mini 已提升为 base.css 全局原子(摘要、场景共用) */
+
+/* —— 悬念簿折叠开关 ——
+ * 标题行整体可点:左箭头 + 标题 + 金色计数标。无框透明,贴着 section-head 的左缘,
+ * 不喧宾夺主——折叠是辅助操作,标题仍是主体。 */
+.bbs-fold-head {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+/* 无可折叠(零条目)时退化为普通标题:不是按钮观感、光标默认 */
+.bbs-fold-head.is-static {
+  cursor: default;
+}
+/* 折叠箭头:展开朝下,收拢转 -90° 朝右——像「合上这一章」。
+   描边继承 currentColor(muted),hover 整行才点亮强调色。 */
+.bbs-fold-caret {
+  flex: 0 0 auto;
+  color: var(--bbs-ink-muted);
+  transition: transform 0.2s ease, color 0.15s;
+}
+.bbs-fold-caret.is-collapsed {
+  transform: rotate(-90deg);
+}
+.bbs-fold-head:hover:not(.is-static) .bbs-fold-caret,
+.bbs-fold-head:focus-visible .bbs-fold-caret {
+  color: var(--bbs-accent);
+}
+/* 计数标:金底描边小药丸,呼应账册「结尾计数」,始终显示;收拢时尤其有用——点明藏了多少条。
+   margin-top:2px —— 标题是 CJK 大字,基线偏低,小药丸按行盒居中会偏上,下压 2px 才视觉对齐。 */
+.bbs-fold-count {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--bbs-accent);
+  background: var(--bbs-accent-soft);
+  border: 1px solid var(--bbs-accent);
+  border-radius: var(--bbs-radius-pill);
+  padding: 1px 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* —— 可收展容器:grid 1fr↔0fr,高度随内容自适应,无需写死 max-height —— */
+.bbs-fold-wrap {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.24s ease;
+}
+.bbs-fold-wrap.is-collapsed {
+  grid-template-rows: 0fr;
+}
+/* min-height:0 + overflow:hidden 才能让 0fr 真正压到零高(否则子项最小内容高顶开) */
+.bbs-fold-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
 .bbs-kind-toggle {
   display: inline-flex;
   flex: 0 0 auto;
@@ -1161,6 +1266,14 @@ function saveEdit() {
   }
   .bbs-summary-act {
     color: var(--bbs-ink-muted);
+  }
+}
+
+/* ============ 减弱动效:箭头与收展都瞬切,不做过渡 ============ */
+@media (prefers-reduced-motion: reduce) {
+  .bbs-fold-caret,
+  .bbs-fold-wrap {
+    transition: none;
   }
 }
 

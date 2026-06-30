@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue';
+import ModalMask from '@/components/ModalMask.vue';
 import { appendOpToLatestLeaf, editItem } from '@/memory/apply';
 import { derivedMeta, memory } from '@/memory/store';
 import { computed, ref } from 'vue';
@@ -112,8 +113,8 @@ function saveEdit() {
       <p>暂时空空如也。摘要时得到的物品会自动登记,也可手动添加。</p>
     </div>
 
-    <!-- 编辑弹窗:不用 Teleport(见 base.css 说明),position:fixed 内联渲染 -->
-    <div v-if="editing" class="bbs-modal-mask" @click.self="cancelEdit">
+    <!-- 编辑弹窗:Teleport 出滚动容器,见 ModalMask -->
+    <ModalMask v-if="editing" @close="cancelEdit">
       <div class="bbs-modal" role="dialog" aria-modal="true" aria-label="编辑物品">
         <header class="bbs-modal-head">
           <span class="bbs-modal-title">编辑物品</span>
@@ -144,7 +145,7 @@ function saveEdit() {
           <button class="bbs-btn bbs-btn-primary" type="button" :disabled="!editing.name.trim()" @click="saveEdit">保存</button>
         </footer>
       </div>
-    </div>
+    </ModalMask>
   </section>
 </template>
 

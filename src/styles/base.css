@@ -183,14 +183,22 @@
 }
 
 /* —— 通用弹窗:供各分页复用(summary 编辑、settings 渠道编辑等)——
-   不用 Teleport:内容须留在 shadow root 内才能拿到 scoped 样式与 --bbs-* 变量;
-   .bbs-modal-mask 用 position:fixed 覆盖全窗,直接内联渲染即可。 */
+   各页弹窗经 ModalMask 组件 Teleport 到 modalHost(.bbs-root 直接子级,在 .bbs-body
+   滚动容器之外),修复 iOS「可滚动祖先内 fixed 后代定位错乱」。宿主仍在 shadow root 内,
+   故 scoped 样式与 --bbs-* 变量照常生效——不可用会逃出 shadow 的 Teleport to="body"。 */
 .bbs-modal-mask {
   position: fixed;
+  /* 必须显式 width/height 撑满视口,不能只靠 top/bottom:0——部分移动端 WebView 不认,
+     高度会塌成内容高(auto),align-items:center 随之失效、弹窗挤向顶部跑出屏幕。
+     与 .bbs-overlay 同款写法(见其注释)。teleport 出滚动容器后这点尤其关键:
+     之前嵌在 .bbs-body 里被滚动祖先撑高掩盖了,搬成视口级 fixed 后塌陷才暴露。 */
   top: 0;
   right: 0;
   bottom: 0;
   left: 0;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
   z-index: 10001;
   display: flex;
   align-items: center;
@@ -198,6 +206,7 @@
   padding: 24px;
   background: var(--bbs-overlay);
   backdrop-filter: blur(3px);
+  animation: bbs-mask-in 0.15s var(--bbs-ease);
 }
 .bbs-modal {
   width: 100%;
@@ -213,11 +222,23 @@
   background: var(--bbs-bg);
   border: 1px solid var(--bbs-line);
   box-shadow: var(--bbs-shadow);
+  animation: bbs-card-in 0.15s var(--bbs-ease);
 }
+/* 标题栏固定:弹窗内容超长时整体滚动,但标题+关闭键随 sticky 钉在顶部不跟滚。
+   负 margin 抵消 .bbs-modal 的 18px 内边距,让标题栏横向铺满、滚动时其不透明背景
+   盖住下方滚上来的内容(否则内容会从标题区透出)。padding 补回内边距。
+   top:-18px 而非 0:.bbs-modal 有 18px 内边距,其滚动视口顶边在内边距处(距窗口边 18px);
+   若 top:0,标题栏会吸附在视口顶边、上方露出 18px 缝隙让内容滚上来。-18px 抵消内边距,贴齐真实顶边。 */
 .bbs-modal-head {
+  position: sticky;
+  top: -18px;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin: -18px -18px 0;
+  padding: 18px 18px 12px;
+  background: var(--bbs-bg);
 }
 .bbs-modal-title {
   font-weight: 600;
@@ -237,6 +258,29 @@
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+/* —— 弹窗入场动画:比窗口(--bbs-dur 0.28s)更快更利落,~0.15s,不墨迹。
+   用纯 CSS animation(挂载即播,天然 appear)而非 Vue Transition:各页弹窗由调用方 v-if 控制,
+   改 Transition 需把 v-if 改成 open prop、slot 会常驻求值导致 null 访问报错(editingChannel.name 等)。
+   animation 零调用方改动、无 null 风险。代价是关闭不带动画——对「利落不墨迹」反而合适。
+   遮罩淡入(@keyframes bbs-mask-in),卡片同时轻微上移+缩放(bbs-card-in)。 */
+@keyframes bbs-mask-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes bbs-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bbs-modal-mask,
+  .bbs-modal {
+    animation: none !important;
+  }
 }
 
 /* —— 空状态:不是错误,是邀请 —— */
