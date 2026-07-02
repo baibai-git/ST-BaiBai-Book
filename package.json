@@ -1,6 +1,6 @@
 {
   "name": "st-baibai-book",
-  "version": "0.9",
+  "version": "0.9.1",
   "private": true,
   "type": "module",
   "scripts": {

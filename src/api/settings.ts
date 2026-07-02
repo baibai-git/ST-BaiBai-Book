@@ -61,6 +61,10 @@ export interface VectorEndpoint {
   key: string;
   /** 模型名 */
   model: string;
+  /** 单次请求超时(秒)。超时即中断该次请求;各角色默认不同(见 defaults),不随地址复用回落。 */
+  timeoutSec: number;
+  /** 失败自动重试次数:仅超时/网络异常/服务端 5xx/限流 429 才重试;4xx 不重试。非负整数。 */
+  retries: number;
 }
 
 /**
@@ -229,9 +233,9 @@ function defaults(): ApiSettings {
       enabled: false,
       // 默认填硅基流动地址 + 各角色模型,用户只需在 embedding 填一次 key 即可跑通:
       // rerank/queryRewrite 的 url/key 留空会回落复用 embedding 的(见 resolveVectorModel)。
-      embedding: { url: 'https://api.siliconflow.cn/v1', key: '', model: 'Qwen/Qwen3-Embedding-8B' },
-      rerank: { url: '', key: '', model: 'Qwen/Qwen3-Reranker-4B' },
-      queryRewrite: { url: '', key: '', model: 'Qwen/Qwen3.5-27B' },
+      embedding: { url: 'https://api.siliconflow.cn/v1', key: '', model: 'Qwen/Qwen3-Embedding-8B', timeoutSec: 10, retries: 1 },
+      rerank: { url: '', key: '', model: 'Qwen/Qwen3-Reranker-4B', timeoutSec: 20, retries: 1 },
+      queryRewrite: { url: '', key: '', model: 'Qwen/Qwen3.5-27B', timeoutSec: 90, retries: 1 },
       recall: {
         rerankCandidates: 20,
         embeddingThreshold: 0.8,
@@ -311,9 +315,9 @@ function normalize(raw: unknown): ApiSettings {
   merged.vector = {
     ...d.vector,
     ...rv,
-    embedding: normalizeVectorEndpoint(rv.embedding),
-    rerank: normalizeVectorEndpoint(rv.rerank),
-    queryRewrite: normalizeVectorEndpoint(rv.queryRewrite),
+    embedding: normalizeVectorEndpoint(rv.embedding, d.vector.embedding),
+    rerank: normalizeVectorEndpoint(rv.rerank, d.vector.rerank),
+    queryRewrite: normalizeVectorEndpoint(rv.queryRewrite, d.vector.queryRewrite),
     recall: { ...d.vector.recall, ...(rv.recall ?? {}) },
   };
   // 召回起始 AI 楼数:非负整数,缺失/非法回退 0(不限制)
@@ -374,12 +378,25 @@ export function sanitizeTagName(raw: string): string {
 }
 
 /** 补全单个向量端点的字段并校验类型(缺失/类型不符回退空串)。 */
-function normalizeVectorEndpoint(e: Partial<VectorEndpoint> | undefined): VectorEndpoint {
+function normalizeVectorEndpoint(
+  e: Partial<VectorEndpoint> | undefined,
+  def: Pick<VectorEndpoint, 'timeoutSec' | 'retries'>,
+): VectorEndpoint {
   const o = e ?? {};
   return {
     url: typeof o.url === 'string' ? o.url : '',
     key: typeof o.key === 'string' ? o.key : '',
     model: typeof o.model === 'string' ? o.model : '',
+    // 超时/重试老数据可能缺:各角色默认值不同(embedding 10s / rerank 20s / query 90s),
+    // 必须按传入的角色默认回退,不能统一回退一个值。
+    timeoutSec:
+      typeof o.timeoutSec === 'number' && Number.isFinite(o.timeoutSec) && o.timeoutSec > 0
+        ? o.timeoutSec
+        : def.timeoutSec,
+    retries:
+      typeof o.retries === 'number' && Number.isFinite(o.retries) && o.retries >= 0
+        ? Math.floor(o.retries)
+        : def.retries,
   };
 }
 
@@ -586,5 +603,7 @@ export function resolveVectorModel(role: 'embedding' | 'rerank' | 'queryRewrite'
     url: cfg.url.trim() || base.url, // 地址留空 → 复用 embedding 地址
     key: cfg.key.trim() || base.key, // 密钥留空 → 复用 embedding 密钥
     model: cfg.model, // 模型始终独立,不回落
+    timeoutSec: cfg.timeoutSec, // 超时/重试始终独立,不回落(各角色默认本就不同)
+    retries: cfg.retries,
   };
 }

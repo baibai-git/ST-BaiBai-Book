@@ -14,6 +14,69 @@ import { resolveVectorModel } from '@/api/settings';
 
 export class EmbedError extends Error {}
 
+/* ============ 超时 + 自动重试 ============ */
+
+/** 重试前的固定退避(毫秒)。 */
+const RETRY_BACKOFF_MS = 800;
+
+/**
+ * 带超时 + 自动重试的 fetch。向量上游常挂住不返回,裸 fetch 会一直干等——
+ * 每次尝试都套一个 AbortController + 定时器,超时即中断;失败按类型决定是否重试:
+ *  - 内部超时 / 网络异常 / 服务端 5xx / 限流 429 → 重试(还有次数时);
+ *  - 4xx(鉴权/格式错等)→ 直接返回 resp,由调用方走既有 !resp.ok 抛错分支(重试无意义);
+ *  - 外部 signal(用户取消生成)触发的中断 → 立即抛出,绝不重试(重试是浪费额度与时间)。
+ * 返回 Response(可能 4xx,交调用方处理);重试耗尽仍失败则抛最后一次错误。
+ */
+export async function fetchWithTimeoutRetry(
+  url: string,
+  init: RequestInit,
+  opts: { timeoutSec: number; retries: number; label: string; externalSignal?: AbortSignal },
+): Promise<Response> {
+  const { timeoutSec, retries, label, externalSignal } = opts;
+  const maxAttempts = Math.max(1, 1 + Math.max(0, retries));
+  let lastErr: unknown;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    // 外部已取消:不再尝试,直接抛(用户主动取消生成)
+    if (externalSignal?.aborted) throw new EmbedError(`${label}已取消`);
+
+    const ctrl = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      ctrl.abort();
+    }, Math.max(1000, timeoutSec * 1000));
+    // 外部取消转发到内部 controller(fetch 只认一个 signal)
+    const onExternalAbort = () => ctrl.abort();
+    externalSignal?.addEventListener('abort', onExternalAbort);
+
+    try {
+      const resp = await fetch(url, { ...init, signal: ctrl.signal });
+      // 5xx / 429 且还有重试机会 → 重试;其余(含 4xx)交调用方处理
+      if ((resp.status >= 500 || resp.status === 429) && attempt < maxAttempts - 1) {
+        lastErr = new EmbedError(`${label} API ${resp.status}`);
+      } else {
+        return resp;
+      }
+    } catch (e) {
+      // 外部取消触发的 abort:立即抛,不重试
+      if (externalSignal?.aborted && !timedOut) throw new EmbedError(`${label}已取消`);
+      lastErr = timedOut
+        ? new EmbedError(`${label}超时(>${timeoutSec}s)`)
+        : new EmbedError(`${label}网络异常:${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      clearTimeout(timer);
+      externalSignal?.removeEventListener('abort', onExternalAbort);
+    }
+
+    // 到这说明本次要重试:还有次数则退避后再来
+    if (attempt < maxAttempts - 1) {
+      await new Promise(r => setTimeout(r, RETRY_BACKOFF_MS));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new EmbedError(`${label}请求失败`);
+}
+
 /* ============ float32 ↔ base64 ============ */
 
 /** Float32Array(或 number[]) → base64(小端字节序),用于上传后端存 BLOB */
@@ -105,12 +168,11 @@ const EMBED_BATCH = 64;
 /** 发一批(≤EMBED_BATCH)文本的 embedding 请求,返回向量数组(顺序对应)。 */
 async function embedBatch(ep: VectorEndpoint, model: string, texts: string[], signal?: AbortSignal): Promise<Float32Array[]> {
   const req = buildEmbeddingRequest(ep, model, texts);
-  let resp: Response;
-  try {
-    resp = await fetch(req.endpoint, { method: 'POST', headers: req.headers, body: req.body, signal });
-  } catch (e) {
-    throw new EmbedError(`embedding 网络异常:${e instanceof Error ? e.message : String(e)}`);
-  }
+  const resp = await fetchWithTimeoutRetry(
+    req.endpoint,
+    { method: 'POST', headers: req.headers, body: req.body },
+    { timeoutSec: ep.timeoutSec, retries: ep.retries, label: 'embedding', externalSignal: signal },
+  );
   if (!resp.ok) {
     const t = await resp.text().catch(() => '');
     throw new EmbedError(`embedding API ${resp.status}: ${t.slice(0, 200)}`);
@@ -233,19 +295,18 @@ function buildRerankBatches(query: string, documents: string[]): RerankBatch[] {
 
 /** 单批 rerank 请求,返回该批内 {index(局部), score}。 */
 async function rerankBatch(
-  endpoint: string, model: string, key: string, query: string, documents: string[], signal?: AbortSignal,
+  endpoint: string, model: string, key: string, query: string, documents: string[],
+  timeoutSec: number, retries: number, signal?: AbortSignal,
 ): Promise<RerankResult[]> {
-  let resp: Response;
-  try {
-    resp = await fetch(endpoint, {
+  const resp = await fetchWithTimeoutRetry(
+    endpoint,
+    {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
       body: JSON.stringify({ model, query, documents, top_n: documents.length }),
-      signal,
-    });
-  } catch (e) {
-    throw new EmbedError(`rerank 网络异常:${e instanceof Error ? e.message : String(e)}`);
-  }
+    },
+    { timeoutSec, retries, label: 'rerank', externalSignal: signal },
+  );
   if (!resp.ok) {
     const t = await resp.text().catch(() => '');
     throw new EmbedError(`rerank API ${resp.status}: ${t.slice(0, 200)}`);
@@ -286,7 +347,7 @@ export async function rerankDocuments(
       const bi = next++;
       if (bi >= batches.length) break;
       const batch = batches[bi];
-      const local = await rerankBatch(endpoint, model, key, query, batch.documents, signal);
+      const local = await rerankBatch(endpoint, model, key, query, batch.documents, ep.timeoutSec, ep.retries, signal);
       for (const r of local) {
         const globalIndex = batch.indices[r.index];
         if (globalIndex === undefined) continue;

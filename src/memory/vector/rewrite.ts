@@ -22,6 +22,7 @@ import { renderHistoryNodes, selectHistoryNodesBefore } from '../inject';
 import { fmtItems, fmtNpcs, fmtPlans, QUERY_REWRITE_SYSTEM, QUERY_REWRITE_TAIL } from '../prompts';
 import { memory } from '../store';
 import { cleanBody } from '../timeTag';
+import { fetchWithTimeoutRetry } from './embed';
 
 /** rewrite 模型最多取几条 query(对齐 Horae) */
 const MAX_QUERIES = 6;
@@ -209,9 +210,9 @@ export async function rewriteQuery(signal?: AbortSignal): Promise<RewriteResult>
 
   const messages = buildMessages(chat);
 
-  let resp: Response;
-  try {
-    resp = await fetch(endpoint, {
+  const resp = await fetchWithTimeoutRetry(
+    endpoint,
+    {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ep.key || ''}` },
       body: JSON.stringify({
@@ -225,11 +226,9 @@ export async function rewriteQuery(signal?: AbortSignal): Promise<RewriteResult>
         stream: false,
         enable_thinking: false,
       }),
-      signal,
-    });
-  } catch (e) {
-    throw new Error(`Query 重写网络异常:${e instanceof Error ? e.message : String(e)}`);
-  }
+    },
+    { timeoutSec: ep.timeoutSec, retries: ep.retries, label: 'Query 重写', externalSignal: signal },
+  );
   if (!resp.ok) {
     const t = await resp.text().catch(() => '');
     throw new Error(`Query 重写 API ${resp.status}: ${t.slice(0, 200)}`);

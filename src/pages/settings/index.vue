@@ -1148,6 +1148,30 @@ function scorePct(score: number): number {
             </div>
           </label>
           <p v-if="vecModelMsg[role.key]" class="bbs-field-hint">{{ vecModelMsg[role.key] }}</p>
+
+          <!-- 超时/重试:各角色独立(默认 embedding 10s / rerank 20s / query 90s),不随地址复用回落。 -->
+          <div class="bbs-vec-io">
+            <label class="bbs-vec-io-item">
+              <span class="bbs-modal-label">超时(秒)</span>
+              <input
+                v-model.number="apiSettings.vector[role.key].timeoutSec"
+                class="bbs-input bbs-num-sm"
+                type="number"
+                min="1"
+                :disabled="!apiSettings.vector.enabled"
+              />
+            </label>
+            <label class="bbs-vec-io-item">
+              <span class="bbs-modal-label">失败重试次数</span>
+              <input
+                v-model.number="apiSettings.vector[role.key].retries"
+                class="bbs-input bbs-num-sm"
+                type="number"
+                min="0"
+                :disabled="!apiSettings.vector.enabled"
+              />
+            </label>
+          </div>
           </div>
             </div>
           </div>
@@ -2146,6 +2170,21 @@ function scorePct(score: number): number {
 }
 .bbs-num {
   max-width: 110px;
+  text-align: right;
+}
+/* 向量端点的超时/重试:两个短输入并排,label 在上、窄框在下,与上方模型行留出呼吸间距 */
+.bbs-vec-io {
+  display: flex;
+  gap: 16px;
+  margin-top: 12px;
+}
+.bbs-vec-io-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bbs-num-sm {
+  width: 72px;
   text-align: right;
 }
 /* 短选项下拉(如字数档位):贴合文字的窄宽,和右侧数字框对齐,不再撑满半行 */
