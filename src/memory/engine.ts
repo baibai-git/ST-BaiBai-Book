@@ -300,6 +300,31 @@ export function holesExceptLast(chat: STMessage[]): number[] {
 const BACKLOG_NOTICE_SENTINEL = '本次生成已拦截';
 
 /**
+ * 「开场白待摘」场景:最新 AI 楼是**全对话第一条 AI 楼(开场白)**、尚未摘要、且正文无时间标签。
+ * 返回该开场白楼层索引;不匹配返回 -1。
+ *
+ * 为何要特判:开场白不是本插件提示词生成的(卡片预设),通常既无 <bbs_start>/<bbs_end> 标签、
+ * 也还没摘要 —— 此刻没有任何时间锚点。若放任首次正文生成,主模型会自行编一个时间,而开场白摘要
+ * 又会独立编另一个,两者对不上(用户实测的时间错乱)。解法:先摘开场白,把时间落进叶子,主模型
+ * 生成时经 latestStoryTime 的「无标签→回退叶子时间」兜底 + 注入的当前时间,即以此为基准推进,同步。
+ * 开场白已带时间标签时不特判(主模型能直接读标签,有锚点),不必多等一次请求。
+ */
+export function openingPendingFloor(chat: STMessage[]): number {
+  let lastAi = -1;
+  for (let i = chat.length - 1; i >= 0; i--) {
+    if (isAiFloor(chat[i])) { lastAi = i; break; }
+  }
+  if (lastAi < 0) return -1;
+  for (let i = lastAi - 1; i >= 0; i--) {
+    if (isAiFloor(chat[i])) return -1; // 之前还有别的 AI 楼 → 不是开场白
+  }
+  if (leafValid(chat[lastAi])) return -1; // 已摘 → 锚点已在
+  const tag = parseTimeRange(clampToTimeTags(chat[lastAi].mes));
+  if (tag.start && tag.end) return -1; // 开场白自带时间标签 → 主模型能读,不必先摘
+  return lastAi;
+}
+
+/**
  * 生成拦截器:每次「产出新正文」的生成前,守住不变式「除最后一条 AI 外其余都必须有摘要」。
  * 判据 = holesExceptLast(末尾 AI 之前的待摘楼层),按数量分流:
  *  - 0 个 → 放行。
@@ -333,6 +358,22 @@ export async function handleGenerationIntercept(
   if (!ctx) return false;
   if (!ctx.getCurrentChatId?.()) return false; // 欢迎页:无聊天不拦
   const chat = ctx.chat ?? [];
+
+  // 开场白特判(不拦,只等):开场白无时间标签、又还没摘时,先摘它建立时间锚点,再放行首次生成。
+  // 否则主模型与开场白摘要会各自凭空编一个开场时间,导致正文与摘要时间对不上(用户实测)。
+  // 摘完(或失败退化)即继续放行——开场白摘要失败不该挡住用户开始游戏。
+  const opening = openingPendingFloor(chat);
+  if (opening >= 0) {
+    const inflight = currentSummaryPromise();
+    if (inflight) {
+      toast('正在为开场白建立时间锚点,请稍候…', 'info');
+      await inflight; // promise 永不 reject,不会卡死生成
+    } else if (!busy) {
+      toast('正在为开场白建立时间锚点,请稍候…', 'info');
+      await runSummary(opening);
+    }
+    // 摘要落盘后 refreshInjection 已把「当前时间」刷成开场白时间;继续走洞判定(通常放行)。
+  }
 
   let holes = holesExceptLast(chat);
   if (holes.length < 1) return false; // 无洞:放行
