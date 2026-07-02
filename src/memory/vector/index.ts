@@ -16,6 +16,7 @@ import { apiSettings, engineActiveHere } from '@/api/settings';
 import type { VecItem } from '@/api/baibaoku';
 import { resetVectorStoreProbe, vecClearScope, vecReconcile, vecUpsert } from './store';
 import { getLeaf, leafValid } from '../apply';
+import { memory } from '../store';
 import { resolveKeepStart } from '../engine';
 import { stripThinkBlocks } from '../timeTag';
 import type { LeafExtra } from '../types';
@@ -53,12 +54,30 @@ function leafStoryTime(leaf: LeafExtra): string {
   return start || end || leaf.timeLabel?.trim() || '';
 }
 
-/** 扫当前 chat 收集所有有效叶子的索引素材。 */
+/**
+ * 种子叶子的 id 集合(carryover 挂 #0、承载旧对话合并总结的那条,不索引进向量库)。
+ * 识别两条口径,任一命中即算:
+ *  - 新数据:leaf.seed === true(carryover.ts 显式打标)。
+ *  - 老数据(标记出现前建的 carryover 聊天):被 id 以 `sum_carry_` 开头的总结节点 childIds 收纳的叶子。
+ * 这样已存在的老聊天无需迁移——reconcile 下次对账时会把这条陈旧索引自动删掉。
+ */
+function seedLeafIds(): Set<string> {
+  const ids = new Set<string>();
+  for (const s of memory.summaries) {
+    if (!s.id.startsWith('sum_carry_')) continue;
+    for (const c of s.childIds ?? []) ids.add(c);
+  }
+  return ids;
+}
+
+/** 扫当前 chat 收集所有有效叶子的索引素材(种子叶子除外)。 */
 function collectLeaves(chat: STMessage[]): LeafForIndex[] {
+  const seeds = seedLeafIds();
   const out: LeafForIndex[] = [];
   for (let i = 0; i < chat.length; i++) {
     if (!leafValid(chat[i])) continue;
     const leaf = getLeaf(chat[i]) as LeafExtra;
+    if (leaf.seed || seeds.has(leaf.id)) continue; // 种子叶子:承载整段总结,不进向量库(见 LeafExtra.seed)
     const document = (leaf.text ?? '').trim();
     if (!document) continue; // 空摘要不索引
     out.push({

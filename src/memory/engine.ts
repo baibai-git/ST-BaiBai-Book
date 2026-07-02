@@ -1104,6 +1104,26 @@ function thresholdForLevel(level: number): number {
   return level === 0 ? apiSettings.leafBatchThreshold : apiSettings.resummaryThreshold;
 }
 
+/**
+ * 把一批待融合节点拼成给总结模型的 content:**每段头部标注该段时间范围**。
+ * 关键:摘要正文的权威时间存在 timeStart/timeEnd 字段(正文里常不含完整日期),
+ * 若只喂正文,总结被「必须写满日期」的规则逼着现编 → 日期全对不上(已修的 bug)。
+ * 故这里把真实时间随正文一并交给模型,让它「看着写」而非凭空造。
+ * 时间括注:两端齐→「起 – 止」;只有一端→那一端;都无→不加括注(不硬造)。
+ */
+function joinNodesForResummary(nodes: Array<{ text: string; timeStart?: string; timeEnd?: string }>): string {
+  return nodes
+    .map((n, i) => {
+      const start = n.timeStart?.trim();
+      const end = n.timeEnd?.trim();
+      let time = '';
+      if (start && end) time = start === end ? `(${start}) ` : `(${start} – ${end}) `;
+      else if (start || end) time = `(${start || end}) `;
+      return `[${i + 1}] ${time}${n.text}`;
+    })
+    .join('\n\n');
+}
+
 /** 压缩用的根节点视图:带起止时间(叶子直接取,comp 取已聚合的范围),供向上合并时取边界。 */
 interface RootView {
   id: string;
@@ -1166,7 +1186,7 @@ export async function checkResummary(): Promise<number> {
     }
 
     const batch = roots.slice(0, threshold);
-    const content = batch.map((s, i) => `[${i + 1}] ${s.text}`).join('\n\n');
+    const content = joinNodesForResummary(batch);
     // 传**输出层级**(level+1):L1(普通总结,300-500字)/ L2+(二次总结,字数随输入动态)
     const prompt = buildResummaryPrompt({ user: ctx.name1, char: ctx.name2, content, level: level + 1 });
 
@@ -1290,12 +1310,25 @@ export async function summarizeSelected(nodeIds: string[]): Promise<{ made: numb
   const key = (n: SelectableNode) => (n.floorLo < 0 ? Number.MAX_SAFE_INTEGER : n.floorLo);
   picked.sort((a, b) => key(a) - key(b));
 
-  // 连续性兜底:选中根覆盖的楼层区间必须连成一段(相邻根的楼层区间首尾相接,不留缺口)。
-  for (let i = 1; i < picked.length; i++) {
-    const prev = picked[i - 1];
-    const cur = picked[i];
-    if (prev.floorHi < 0 || cur.floorLo < 0 || cur.floorLo > prev.floorHi + 1) {
-      return { made: 0, error: '只能合并覆盖楼层连续的摘要' };
+  // 连续性兜底:选中项必须是「当前根序列」里的一段连续切片(中间不能跳过其它根)。
+  // ⚠️ 不能用 msgIndex 差值(cur.floorLo > prev.floorHi + 1)判断——叶子的 floorLo/Hi 只记
+  // 自身那条 AI 楼的 index,不含前置 user 楼,而相邻 AI 楼之间必然隔着 user 楼(差≥2),
+  // 那样会把任意两条相邻叶子摘要误判为不连续(合并静默失败的根因)。改为按「根在森林里的次序」
+  // 判断,与 UI 的 canMerge(根序列数组索引相邻)同源。
+  const referenced = new Set<string>();
+  for (const s of memory.summaries) for (const c of s.childIds ?? []) referenced.add(c);
+  const rootOrder = [...all.values()].filter(n => !referenced.has(n.id)).sort((a, b) => key(a) - key(b));
+  const posOf = new Map(rootOrder.map((n, i) => [n.id, i] as const));
+  const positions: number[] = [];
+  for (const n of picked) {
+    const p = posOf.get(n.id);
+    if (p === undefined) return { made: 0, error: '选中项里有已被收纳的摘要,请只选顶层摘要' };
+    positions.push(p);
+  }
+  positions.sort((a, b) => a - b);
+  for (let i = 1; i < positions.length; i++) {
+    if (positions[i] !== positions[i - 1] + 1) {
+      return { made: 0, error: '只能合并连续的摘要(中间不能跳过其它摘要)' };
     }
   }
 
@@ -1303,7 +1336,7 @@ export async function summarizeSelected(nodeIds: string[]): Promise<{ made: numb
   if ('error' in sender) return { made: 0, error: sender.error };
 
   const level = Math.max(...picked.map(n => n.level)) + 1;
-  const content = picked.map((n, i) => `[${i + 1}] ${n.text}`).join('\n\n');
+  const content = joinNodesForResummary(picked);
   const prompt = buildResummaryPrompt({ user: ctx.name1, char: ctx.name2, content, level });
 
   busy = true;

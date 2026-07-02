@@ -162,6 +162,13 @@ export interface LeafExtra {
   swipe?: number;
   /** 旧字段:hash(清洗后的 mes)。已废弃(叶子有效性改为楼层/结构匹配,不再比对正文);仅旧数据残留 */
   srcHash?: string;
+  /**
+   * 种子叶子标记:carryover(带数据建新对话)挂在 #0 的那条叶子,其 text 是旧对话「合并总结」的散文。
+   * 它只服务于状态重放(deriveMemory 读 delta)与历史摘要注入(被 sum_carry_ 的 L2 收纳),
+   * **不该进向量库**——否则召回会命中一整段总结(而旧对话的单条摘要已由 bundle 快照覆盖召回)。
+   * collectLeaves 据此跳过它。
+   */
+  seed?: boolean;
   /** 叶子结构版本 */
   v: 1;
 }

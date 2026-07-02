@@ -10,6 +10,7 @@ import { compactTimeLabel, formatRange, splitTimeLabel } from '@/memory/timeTag'
 import { relativeTimeLabel, weekdayLabel } from '@/memory/timeRel';
 import { derivedMeta, memory, recomputeDerived } from '@/memory/store';
 import { getContext } from '@/st/context';
+import { toast } from '@/st/toast';
 import { computed, nextTick, onMounted, onUnmounted, provide, ref } from 'vue';
 import SummaryNode from './SummaryNode.vue';
 import { SUMMARY_CTX, type SummaryRow } from './ctx';
@@ -444,8 +445,13 @@ async function runMerge() {
   merging.value = true;
   try {
     const res = await summarizeSelected(ids);
-    if (res.made > 0) exitSelectMode();
-    // 失败时保留选择,错误已写 engineState.lastError,顶部错误条会显示
+    if (res.made > 0) {
+      exitSelectMode();
+    } else if (res.error) {
+      // 失败时保留选择。早退分支(未生效/正忙/不连续等)不走引擎的 try/catch,
+      // 不会写 engineState.lastError,故这里主动弹 toast,避免「无事发生、无报错」。
+      toast(res.error, 'warning');
+    }
   } finally {
     merging.value = false;
   }

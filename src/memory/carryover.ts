@@ -243,6 +243,7 @@ export async function createNewChatWithCarryover(): Promise<boolean> {
       timeEnd: seedTime || undefined,
       timeStart: seedTime || undefined,
       createdAt: Date.now(),
+      seed: true, // 种子叶子:承载旧对话合并总结,不进向量库(见 index.ts collectLeaves + LeafExtra.seed 注释)
       v: 1,
     };
     anchor.extra = { ...(anchor.extra ?? {}), bbs_leaf: seedLeaf };
