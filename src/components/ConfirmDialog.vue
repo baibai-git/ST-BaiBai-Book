@@ -62,7 +62,7 @@ function confirm() {
         v-if="open"
         class="bbs-modal-mask"
         :class="{ 'bbs-modal-mask-top': topLayer }"
-        @click.self="cancel"
+        @mousedown.self="cancel"
       >
         <div class="bbs-modal bbs-modal-confirm" role="dialog" aria-modal="true" :aria-label="title">
           <header class="bbs-modal-head">

@@ -53,7 +53,9 @@ function cancelEdit() {
 function saveEdit() {
   const e = editing.value;
   if (!e || !e.name.trim()) return;
-  const qtyStr = e.qty.trim();
+  // qty 用 String() 兜底:type="number" 的 v-model 会把值转成 number(Vue 对 number input 的默认行为),
+  // 直接 .trim() 会因「number 无 trim」抛错 → saveEdit 中断、弹窗不关(表现为点保存没反应)。
+  const qtyStr = String(e.qty).trim();
   const qty = qtyStr === '' ? undefined : Number(qtyStr);
   // 随身 → 清空存放地;非随身 → 用填写的地点
   editItem(e.oldName, {

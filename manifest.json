@@ -3,10 +3,10 @@
   "loading_order": 100,
   "requires": [],
   "optional": [],
-  "js": "dist/index.js?ver=0.9.2",
+  "js": "dist/index.js?ver=0.9.3",
   "generate_interceptor": "bbs_generateInterceptor",
   "author": "柏柏",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "homePage": "https://github.com/baibai-git/ST-BaiBai-Book",
   "auto_update": false,
   "minimum_client_version": "1.12.13"

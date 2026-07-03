@@ -35,7 +35,7 @@ const emit = defineEmits<{ (e: 'close'): void }>();
         v-if="open"
         class="bbs-modal-mask"
         :class="{ 'bbs-modal-mask-top': topLayer }"
-        @click.self="emit('close')"
+        @mousedown.self="emit('close')"
       >
         <slot />
       </div>

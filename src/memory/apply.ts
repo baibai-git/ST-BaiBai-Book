@@ -925,9 +925,18 @@ export function editItem(
   const location = patch.location !== undefined ? (patch.location.trim() || undefined) : prev?.location;
 
   if (norm(newName) !== norm(oldName)) {
-    // 改名:先删旧,再以新名重建(qty 用 add 语义,但旧的已删,等于设为该值)
+    // 改名:删旧名 + 以新名重建。
+    // add 是「累加」语义,只有当新名在所有叶子里都不存在时才等于「设为该值」;
+    // 但改名往返(A→B→A)时,A 往往在更早的叶子里已被 add 过,remove 只作用于本次删的旧名,
+    // 拦不住早期叶子对 A 的累加 —— 会把数量叠上去(3 改回后变 4)。
+    // 故再补一条 update:重放序 add→update,add 先建身份/描述/位置(哪怕误累加),
+    // update 把数量「设为绝对值」,与物品源自哪条叶子无关。qty 未给(留空=不计数)时不发 update。
     return appendOpToLatestLeaf({
-      items: { remove: [oldName], add: [{ name: newName, qty, desc, carried, location }] },
+      items: {
+        remove: [oldName],
+        add: [{ name: newName, qty, desc, carried, location }],
+        ...(qty !== undefined ? { update: [{ name: newName, qty }] } : {}),
+      },
     });
   }
   // 同名:更新数量/描述/位置(update 是「设为新值」)

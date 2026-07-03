@@ -376,8 +376,10 @@ function saveTag(tag: Tag) {
         const x = arr?.[tag.idx];
         if (x) {
           x.name = edit.name.trim();
-          const q = Number(edit.qty);
-          if (edit.qty.trim() && Number.isFinite(q)) x.qty = q;
+          // String() 兜底:type="number" 的 v-model 会把值转成 number,直接 .trim() 会抛错(number 无 trim)。
+          const qtyStr = String(edit.qty).trim();
+          const q = Number(qtyStr);
+          if (qtyStr && Number.isFinite(q)) x.qty = q;
           else delete x.qty;
           if (edit.desc.trim()) x.desc = edit.desc.trim();
           else delete x.desc;
