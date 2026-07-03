@@ -3,7 +3,7 @@ import { fmtItemLogInline } from './prompts';
 import { memory, recomputeDerived, saveMemory, scheduleLeafFlush } from './store';
 import { readItemsTagText, writeItemLogTag } from './timeTag';
 import { createEmptyMemory } from './types';
-import type { BaibaiMemory, ItemDelta, ItemLogEntry, LeafExtra, MemPlan, MemScene, MemSummary, NpcDelta, SceneDelta, SceneReparent, StoredDelta, SummaryDelta } from './types';
+import type { BaibaiMemory, ItemDelta, ItemLogEntry, LeafExtra, MemNpc, MemPlan, MemScene, MemSummary, NpcDelta, SceneDelta, SceneReparent, StoredDelta, SummaryDelta } from './types';
 
 let idSeq = 0;
 /** 生成稳定唯一 id(不依赖 random;时间走 nowMs 便于测试注入) */
@@ -79,6 +79,53 @@ export function findCurrentSceneId(scenes: MemScene[], here: string, locationPat
     if (hit && (!best || s.path.length > best.path.length)) best = s;
   }
   return best?.id ?? '';
+}
+
+/**
+ * 两个场景节点路径的相对关系,以 pPath(主角当前节点)为基准。供 NPC 在场分档用:
+ *  - 'same':同一节点。
+ *  - 'near':N 是 P 的直接父(上一级)/ N 是 P 的后代(向下不封顶)/ 旁支且共享直接父。
+ *  - 'far' :N 是 P 更上级祖先(≥2 级)/ 旁支且公共祖先更远。
+ * 「同区域」= near:抬头最多一级就能找到与主角共同的地点(向上封顶一级,挡住街区/城镇;向下不封顶)。
+ */
+export type SceneRel = 'same' | 'near' | 'far';
+export function sceneRelation(pPath: string[], nPath: string[]): SceneRel {
+  let common = 0;
+  const min = Math.min(pPath.length, nPath.length);
+  while (common < min && norm(pPath[common]) === norm(nPath[common])) common++;
+  const p = pPath.length;
+  const q = nPath.length;
+  if (common === p && common === q) return 'same';       // 同一节点
+  if (common === q) return p - q === 1 ? 'near' : 'far';  // N 是 P 的祖先:仅上一级算近
+  if (common === p) return 'near';                        // N 是 P 的后代:向下不封顶
+  return p - common === 1 ? 'near' : 'far';               // 旁支:共享直接父才算近
+}
+
+export type NpcPresence = 'present' | 'nearby' | 'absent';
+
+/**
+ * NPC 在场分档的**唯一权威**:注入端(inject.ts)与 NPC 页(pages/npcs)都调它,杜绝两套逻辑漂移
+ * (NPC 页曾复刻旧逻辑、又没用 locationPath,把主角误定位到同名旁支节点、错判在场——正是本函数要根治的)。
+ *  - 'present':随行,或所在地=主角当前节点(含解析并入当前节点的更细子地点)。
+ *  - 'nearby' :抬头最多一级就与主角共处(上一级祖先 / 后代 / 旁支共享直接父)。
+ *  - 'absent' :更上级祖先(街区/校区)或更远旁支。
+ * 主角/NPC 任一落不到树节点时退回纯字符串双向包含(present/absent 两态)。
+ */
+export function classifyNpcPresence(
+  npc: MemNpc,
+  scenes: MemScene[],
+  here: string,
+  locationPath?: string[],
+): NpcPresence {
+  if (npc.follow === true) return 'present';
+  // 主角当前节点:走权威 findCurrentSceneId(优先 locationPath 精确定位,再模糊兜底)
+  const cur = scenes.find(s => s.id === findCurrentSceneId(scenes, here, locationPath)) ?? null;
+  if (!cur) return sceneNameReachable(npc.location, here) ? 'present' : 'absent';
+  // NPC 所在地同样解析成节点后比路径
+  const n = scenes.find(s => s.id === findCurrentSceneId(scenes, npc.location ?? '')) ?? null;
+  if (!n) return sceneNameReachable(npc.location, here) ? 'present' : 'absent';
+  const rel = sceneRelation(cur.path, n.path);
+  return rel === 'same' ? 'present' : rel === 'near' ? 'nearby' : 'absent';
 }
 
 /** 包含式双向匹配(地名命名粗细不一时的兜底);空串不匹配。供 findCurrentSceneId 内部用。 */

@@ -1,4 +1,5 @@
 import vue from '@vitejs/plugin-vue';
+import fs from 'node:fs';
 import path from 'node:path';
 import { defineConfig } from 'vite';
 
@@ -18,7 +19,16 @@ const globals: Record<string, string> = {
   toastr: 'toastr',
 };
 
+const package_json = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')) as {
+  version?: string;
+};
+const package_version = String(package_json.version ?? '');
+
 export default defineConfig(({ mode }) => ({
+  define: {
+    __BBS_VERSION__: JSON.stringify(package_version),
+  },
+
   plugins: [
     vue(),
     {

@@ -13,7 +13,7 @@
 import { apiSettings, engineActiveHere } from '@/api/settings';
 import type { STMessage } from '@/st/context';
 import { getContext } from '@/st/context';
-import { findCurrentSceneId, getLeaf, leafValid } from './apply';
+import { classifyNpcPresence, findCurrentSceneId, getLeaf, leafValid } from './apply';
 import { fmtItems, fmtPlans, fmtResolvedPlans, selectRecentResolvedPlans, MEMORY_BRIEFING_NOTE, MEMORY_BRIEFING_END } from './prompts';
 import { memory } from './store';
 import { compactTimeLabel, formatRange, latestStoryTime, splitTimeLabel, timeTagPrompt } from './timeTag';
@@ -304,15 +304,6 @@ function fmtSceneContext(scenes: MemScene[], here: string, locationPath?: string
   return lines.join('\n');
 }
 
-/**
- * NPC 是否「在场」:随行(follow=true)永远在场;否则按所在地与当前地点(及祖先链)可达判定。
- * 复用物品同款 itemReachableInScene(carried↔follow、location 同义)。
- */
-function npcOnScene(npc: MemNpc, here: string, chain: MemScene[]): boolean {
-  if (npc.follow === true) return true;
-  return itemReachableInScene(npc.location, here, chain);
-}
-
 /** 把 NPC 的「即时状态」(着装/状态/所在)拼成一段尾注;无则空串。供在场与主要角色组复用。 */
 function npcStateTail(n: MemNpc, withPlace: boolean): string {
   const tail: string[] = [];
@@ -326,20 +317,25 @@ function npcStateTail(n: MemNpc, withPlace: boolean): string {
 }
 
 /**
- * 渲染 NPC 名册注入块(分三档省 token):
+ * 渲染 NPC 名册注入块(分四档省 token):
  *  - **主要角色**(important):永远全量置顶,**突出即时状态面板**(着装/状态/所在),身份/性格/外貌从简。
- *  - 在场(随行 / 所在地落当前地点或祖先链)→ 全量:名 + 身份 + 性格 + 外貌 + 即时状态。
- *  - 不在场 → 只发 名 + 身份(title),砍掉外貌/性格这两个大头(但主要角色即便不在场也已在上面全量发了)。
+ *  - 在场(随行 / 所在地=主角当前节点)→ 全量:名 + 身份 + 性格 + 外貌 + 即时状态。
+ *  - **同区域**(抬头最多一级就与主角共处)→ 轻量:名 + 身份 + 性格 + 所在地。留个性格,免得 AI
+ *    临时拉其出场时凭空 OOC;但砍掉外貌/即时状态这俩大头,人多时省得多。
+ *  - 不在场(更上级祖先/更远旁支)→ 只发 名 + 身份(title)。
  * 无 NPC 返回空串。
  */
-function fmtNpcContext(npcs: MemNpc[], here: string, chain: MemScene[]): string {
+function fmtNpcContext(npcs: MemNpc[], scenes: MemScene[], here: string, locationPath?: string[]): string {
   if (!npcs.length) return '';
   const main: MemNpc[] = [];
   const present: MemNpc[] = [];
+  const nearby: MemNpc[] = [];
   const absent: MemNpc[] = [];
   for (const n of npcs) {
-    if (n.important) main.push(n); // 主要角色单列,不再进在场/不在场判定
-    else if (npcOnScene(n, here, chain)) present.push(n);
+    if (n.important) { main.push(n); continue; } // 主要角色单列,不再进在场判定
+    const p = classifyNpcPresence(n, scenes, here, locationPath); // 与 NPC 页共用同一权威判定
+    if (p === 'present') present.push(n);
+    else if (p === 'nearby') nearby.push(n);
     else absent.push(n);
   }
 
@@ -369,6 +365,18 @@ function fmtNpcContext(npcs: MemNpc[], here: string, chain: MemScene[]): string 
       .join('\n');
     lines.push(`在场角色:\n${detailed}`);
   }
+  if (nearby.length) {
+    // 同区域:名 + 身份 + 性格 + 所在地;砍掉外貌/即时状态。留性格以稳住临时出场时的人设。
+    const brief = nearby
+      .map(n => {
+        const title = n.title?.trim() ? `(${n.title.trim()})` : '';
+        const pers = n.personality?.trim() ? ` —— 性格:${n.personality.trim()}` : '';
+        const place = n.location?.trim() ? ` [在:${n.location.trim()}]` : '';
+        return `  - ${n.name}${title}${pers}${place}`;
+      })
+      .join('\n');
+    lines.push(`同区域角色(在附近但未必照面;需要时可让其自然登场,勿凭空改设定):\n${brief}`);
+  }
   if (absent.length) {
     // 不在场:仅名 + 身份,按所在地括注;无外貌/性格/状态
     const brief = absent
@@ -397,7 +405,8 @@ export function buildStateInjectionText(): string {
   // 场景树:当前地点 + 祖先链(详细) + 其他地点(仅名称)。祖先链同时用于物品/NPC 可达判定。
   const sceneBlock = fmtSceneContext(memory.scenes, here, locPath);
   if (sceneBlock) st.push(`地点记忆:\n${sceneBlock}`);
-  const chain = sceneChain(memory.scenes, findCurrentScene(memory.scenes, here, locPath));
+  const current = findCurrentScene(memory.scenes, here, locPath);
+  const chain = sceneChain(memory.scenes, current);
 
   // 物品分两组省 token:可达(随身 / 存放地落在当前地点或其祖先链)发全量(名+量+描述);
   // 他处寄存的只发名+数量(砍掉描述这个大头),既省 token 又不至于让主模型以为东西没了。
@@ -414,9 +423,8 @@ export function buildStateInjectionText(): string {
   // 注:近期物品变动不在此注入。改为摘要后写进对应楼层正文 </bbs_end> 之后(见 engine.ts),
   // 窗口内全文楼层天然可见、滚出窗口自然消失 —— 符合「物品变动只在那段时间有用」的取舍。
 
-  // NPC 名册:在场(随行/所在地落当前地点或祖先链)发全量(名+身份+性格+描述);
-  // 不在场只发名+身份(砍掉描述/性格),NPC 越多省得越多。
-  const npcBlock = fmtNpcContext(memory.npcs, here, chain);
+  // NPC 名册四档:在场发全量;同区域发名+身份+性格+所在地;不在场只发名+身份。NPC 越多省得越多。
+  const npcBlock = fmtNpcContext(memory.npcs, memory.scenes, here, locPath);
   if (npcBlock) st.push(`NPC名册:\n${npcBlock}`);
 
   const openPlans = memory.plans

@@ -3,3 +3,4 @@
 declare const $: any;
 declare const _: any;
 declare const toastr: any;
+declare const __BBS_VERSION__: string;

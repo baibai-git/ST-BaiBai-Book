@@ -15,6 +15,7 @@ import { getContext } from '@/st/context';
 import { isRealAiReply } from '@/memory/engine';
 import { apiSettings, engineActiveHere } from '@/api/settings';
 import { watch } from 'vue';
+import { versionedAssetUrl } from '@/version';
 
 const HOST_CLASS = 'bbs-fp-host';
 const MARK_ATTR = 'data-bbs-fp'; // 标在 .mes 上,防重复注入
@@ -42,7 +43,7 @@ const mountedByFloor = new Map<number, Mounted>();
 function resolveCssHref(): string {
   if (cssHref) return cssHref;
   try {
-    cssHref = new URL('./index.css', import.meta.url).href;
+    cssHref = versionedAssetUrl('./index.css', import.meta.url);
   } catch {
     cssHref = '';
   }

@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "sync-version": "node scripts/sync-version.mjs",
+    "prebuild": "node scripts/sync-version.mjs",
     "build": "vite build",
+    "prewatch": "node scripts/sync-version.mjs",
     "watch": "vite build --watch --mode development"
   },
   "devDependencies": {

@@ -11,6 +11,7 @@ import { syncTopBarButton } from '@/topbar';
 import { syncQuickReplyButton } from '@/quickReply';
 import { bindFloorPanel } from '@/floorPanel';
 import { ui } from '@/state/ui';
+import { versionedAssetUrl } from '@/version';
 import { watch } from 'vue';
 // 这两行让 Vite 把全局样式打进 dist/index.css(随后注入 shadow root)
 import '@/styles/base.css';
@@ -89,7 +90,7 @@ function mount() {
   const link = document.createElement('link');
   link.rel = 'stylesheet';
   // index.js 与 index.css 在 dist 同级,据当前模块 URL 推导,部署路径无关。
-  link.href = new URL('./index.css', import.meta.url).href;
+  link.href = versionedAssetUrl('./index.css', import.meta.url);
   shadow.appendChild(link);
 
   const container = document.createElement('div');

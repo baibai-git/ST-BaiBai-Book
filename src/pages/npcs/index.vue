@@ -2,9 +2,9 @@
 import Icon from '@/components/Icon.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import ModalMask from '@/components/ModalMask.vue';
-import { editNpc, removeNpc, setNpcFollow, setNpcImportant, upsertNpc } from '@/memory/apply';
+import { classifyNpcPresence, editNpc, removeNpc, setNpcFollow, setNpcImportant, upsertNpc } from '@/memory/apply';
 import { derivedMeta, memory } from '@/memory/store';
-import type { MemNpc, MemScene } from '@/memory/types';
+import type { MemNpc } from '@/memory/types';
 import { computed, nextTick, ref } from 'vue';
 
 // NPC 是从叶子摘要重放出的派生数据,手动操作写入「最新一条有效叶子」;无有效叶子时无处挂载。
@@ -13,62 +13,32 @@ const hasLeaf = computed(() => derivedMeta.hasLeaf);
 // 触屏判定:跳过弹窗自动聚焦(移动端自动聚焦会弹输入法挡界面),与场景/摘要页一致。
 const isTouch = typeof window !== 'undefined' && window.matchMedia?.('(hover: none)').matches;
 
-/* —— 在场判定:复刻注入端 inject.ts 的口径,确保「界面显示的 = AI 收到的」 ——
-   随行(follow)永远在场;否则按 location 与「当前地点 + 祖先链」包含式可达。 */
-function match(a: string | undefined, b: string): boolean {
-  const x = (a ?? '').trim();
-  const y = b.trim();
-  if (!x || !y) return false;
-  return x.includes(y) || y.includes(x);
-}
-
-// 当前所在场景节点(与场景页 / 注入端 findCurrentScene 同口径:包含式匹配、取最深)
-const currentScene = computed<MemScene | null>(() => {
-  const here = (memory.state.location || '').trim();
-  if (!here) return null;
-  let best: MemScene | null = null;
-  for (const s of memory.scenes) {
-    const hit = match(s.name, here) || s.path.some(seg => match(seg, here));
-    if (hit && (!best || s.path.length > best.path.length)) best = s;
-  }
-  return best;
-});
-
-// 当前所在地点 + 其祖先链的「可匹配名」集合(本级名 + 完整路径拼接),供 NPC location 比对
-const reachableNames = computed<string[]>(() => {
-  const names: string[] = [];
-  const here = (memory.state.location || '').trim();
-  if (here) names.push(here);
-  const byId = new Map(memory.scenes.map(s => [s.id, s]));
-  let cur = currentScene.value;
-  const seen = new Set<string>();
-  while (cur && !seen.has(cur.id)) {
-    seen.add(cur.id);
-    names.push(cur.name, cur.path.join(''));
-    cur = cur.parentId ? byId.get(cur.parentId) ?? null : null;
-  }
-  return names;
-});
-
-function onScene(npc: MemNpc): boolean {
-  if (npc.follow === true) return true;
-  const loc = (npc.location ?? '').trim();
-  if (!loc) return false;
-  // 无场景数据时退回纯当前地点字符串比对(与注入端 itemReachableInScene 的兜底一致)
-  if (!reachableNames.value.length) return false;
-  return reachableNames.value.some(n => match(loc, n));
-}
-
-// 分三组:主要角色(置顶,不论在场)/ 在场(随行/所在地可达)/ 不在场。各组按创建序稳定排列。
-// 复刻注入端 fmtNpcContext 口径:important 单列,不再进在场/不在场判定 —— 确保所见即所发。
+// 在场分档:与注入端(inject.ts)共用同一权威 classifyNpcPresence —— 读 location + locationPath,
+// 杜绝两套逻辑漂移,确保「界面显示的 = AI 收到的」。四档:
+//   主要角色(置顶,不论在场)/ 在场(全量)/ 同区域(名+身份+性格)/ 不在场(名+身份)。
 const sortByCreated = (a: MemNpc, b: MemNpc) => a.createdAt - b.createdAt;
+
+// 单趟分桶:每个非主要角色只判一次在场,避免三个 computed 各判一遍。
+const buckets = computed(() => {
+  const present: MemNpc[] = [];
+  const nearby: MemNpc[] = [];
+  const absent: MemNpc[] = [];
+  const here = memory.state.location || '';
+  const locPath = memory.state.locationPath;
+  for (const n of memory.npcs) {
+    if (n.important) continue; // 主要角色单列,不进在场判定
+    const p = classifyNpcPresence(n, memory.scenes, here, locPath);
+    (p === 'present' ? present : p === 'nearby' ? nearby : absent).push(n);
+  }
+  present.sort(sortByCreated);
+  nearby.sort(sortByCreated);
+  absent.sort(sortByCreated);
+  return { present, nearby, absent };
+});
 const mains = computed(() => memory.npcs.filter(n => n.important).sort(sortByCreated));
-const present = computed(() =>
-  memory.npcs.filter(n => !n.important && onScene(n)).sort(sortByCreated),
-);
-const absent = computed(() =>
-  memory.npcs.filter(n => !n.important && !onScene(n)).sort(sortByCreated),
-);
+const present = computed(() => buckets.value.present);
+const nearby = computed(() => buckets.value.nearby);
+const absent = computed(() => buckets.value.absent);
 
 /* —— 随行一键开关:随行→取消(留在当前地点);非随行→标记随行 —— */
 function toggleFollow(npc: MemNpc) {
@@ -279,6 +249,48 @@ function confirmRemove() {
         </div>
       </div>
 
+      <!-- 同区域:在附近但未必照面。发名+身份+性格给 AI,这里也只展示这三样 -->
+      <div v-if="nearby.length" class="bbs-npc-group">
+        <div class="bbs-npc-grouphead">
+          <span class="bbs-npc-grouptag is-nearby">同区域</span>
+          <span class="bbs-npc-grouphint">在附近,发送名字、身份与性格</span>
+        </div>
+        <div class="bbs-npc-list">
+          <article v-for="n in nearby" :key="n.id" class="bbs-npc is-nearby">
+            <div class="bbs-npc-body">
+              <div class="bbs-npc-head">
+                <span class="bbs-npc-name">{{ n.name }}</span>
+                <span v-if="n.location" class="bbs-npc-flag"><Icon name="scenes" />{{ n.location }}</span>
+                <span class="bbs-npc-acts">
+                  <button
+                    class="bbs-item-act bbs-npc-star"
+                    type="button"
+                    title="标记为主要角色(始终全量发送、追踪状态)"
+                    @click="toggleImportant(n)"
+                  >
+                    <Icon name="star" />
+                  </button>
+                  <button
+                    class="bbs-item-act bbs-npc-pin"
+                    type="button"
+                    title="标记为随行同伴(将随主角在场)"
+                    @click="toggleFollow(n)"
+                  >
+                    <Icon name="pin" />
+                  </button>
+                  <button class="bbs-item-act" type="button" title="编辑" @click="openEdit(n)"><Icon name="edit" /></button>
+                  <button class="bbs-item-act bbs-item-del" type="button" title="删除" @click="askRemove(n)"><Icon name="trash" /></button>
+                </span>
+              </div>
+              <dl v-if="n.title || n.personality" class="bbs-npc-fields">
+                <div v-if="n.title" class="bbs-npc-field f-title"><dt>身份</dt><dd>{{ n.title }}</dd></div>
+                <div v-if="n.personality" class="bbs-npc-field f-trait"><dt>性格</dt><dd>{{ n.personality }}</dd></div>
+              </dl>
+            </div>
+          </article>
+        </div>
+      </div>
+
       <!-- 不在场:只发名+身份给 AI,这里也压暗、收起细节 -->
       <div v-if="absent.length" class="bbs-npc-group">
         <div class="bbs-npc-grouphead">
@@ -479,6 +491,12 @@ function confirmRemove() {
   background: var(--bbs-accent);
   color: var(--bbs-accent-ink);
 }
+/* 同区域:描边空心 pill —— 介于「在场(实心强调)」与「不在场(实心灰底)」之间 */
+.bbs-npc-grouptag.is-nearby {
+  background: transparent;
+  border: 1px solid var(--bbs-line-strong);
+  padding: 1px 8px; /* 补偿 1px 边框,保持与实心标签等高 */
+}
 /* 主要角色分组标签:同强调底色 + 星标,与置顶组的「核心」地位呼应 */
 .bbs-npc-grouptag.is-main {
   display: inline-flex;
@@ -519,6 +537,17 @@ function confirmRemove() {
   width: 3px;
   background: var(--bbs-accent);
   opacity: 0.5;
+}
+/* 同区域:左色条更细更淡 —— 在「在场(3px@0.5)」与「不在场(无条)」之间的一档 */
+.bbs-npc.is-nearby::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--bbs-accent);
+  opacity: 0.28;
 }
 /* 随行:色条加粗加实,作同伴的最高标识 */
 .bbs-npc.is-follow::before {

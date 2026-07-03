@@ -3,7 +3,7 @@
   "loading_order": 100,
   "requires": [],
   "optional": [],
-  "js": "dist/index.js",
+  "js": "dist/index.js?ver=0.9.2",
   "generate_interceptor": "bbs_generateInterceptor",
   "author": "柏柏",
   "version": "0.9.2",
