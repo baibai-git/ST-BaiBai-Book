@@ -6,6 +6,7 @@ import { syncTimeTagRegex } from '@/memory/timeTag';
 import { bindChatLifecycle } from '@/memory/store';
 import { checkForUpdate } from '@/memory/update';
 import App from '@/App.vue';
+import { vAutosize } from '@/directives/autosize';
 import { injectMenuButton } from '@/menu';
 import { syncTopBarButton } from '@/topbar';
 import { syncQuickReplyButton } from '@/quickReply';
@@ -97,6 +98,7 @@ function mount() {
   shadow.appendChild(container);
 
   const app = createApp(App);
+  app.directive('autosize', vAutosize);
   app.mount(container);
 
   $(window).on('pagehide', () => app.unmount());

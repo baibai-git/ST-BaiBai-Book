@@ -487,14 +487,22 @@ interface BuildArgs {
   hasTimeTags: boolean;
 }
 
+/**
+ * 单行化:把值里的换行折叠成空格。名册/物品/地点/计划都是「一条一行、字段内联拼接」的格式,
+ * 值内含换行会把一条拆成多行、破坏结构、误导模型。故所有内联字段渲染前都过此函数(trim 拦不住中间换行)。
+ */
+function oneLine(s: string | undefined): string {
+  return (s ?? '').replace(/\s*[\r\n]+\s*/g, ' ').trim();
+}
+
 export function fmtItems(items: BuildArgs['items']): string {
   if (!items.length) return '  (无)';
   return items
     .map(i => {
       const qty = typeof i.qty === 'number' ? ` ×${i.qty}` : '';
-      const desc = i.desc ? ` —— ${i.desc}` : '';
+      const desc = oneLine(i.desc) ? ` —— ${oneLine(i.desc)}` : '';
       // 随身/存放地标注:随身(默认)不标,非随身标 [存:地点],让 AI 知道现状以便正确移动物品
-      const place = i.carried === false ? ` [存:${i.location || '某处'}]` : '';
+      const place = i.carried === false ? ` [存:${oneLine(i.location) || '某处'}]` : '';
       return `  - ${i.name}${qty}${place}${desc}`;
     })
     .join('\n');
@@ -513,7 +521,7 @@ export function fmtScenes(scenes: BuildArgs['scenes']): string {
       const depth = Math.max(0, s.path.length - 1);
       const indent = '  '.repeat(depth + 1); // 至少一级缩进对齐其它块
       const name = s.path[s.path.length - 1] ?? '';
-      const desc = s.desc?.trim() ? ` —— ${s.desc.trim()}` : '';
+      const desc = oneLine(s.desc) ? ` —— ${oneLine(s.desc)}` : '';
       return `${indent}- ${name}${desc}`;
     })
     .join('\n');
@@ -530,11 +538,11 @@ export function fmtNpcs(npcs: BuildArgs['npcs']): string {
   return npcs
     .map(n => {
       const star = n.important ? '★ ' : '';
-      const place = n.follow ? ' [随行]' : n.location ? ` [在:${n.location}]` : '';
-      const title = n.title?.trim() ? ` —— ${n.title.trim()}` : '';
+      const place = n.follow ? ' [随行]' : oneLine(n.location) ? ` [在:${oneLine(n.location)}]` : '';
+      const title = oneLine(n.title) ? ` —— ${oneLine(n.title)}` : '';
       const state: string[] = [];
-      if (n.outfit?.trim()) state.push(`着装:${n.outfit.trim()}`);
-      if (n.condition?.trim()) state.push(`状态:${n.condition.trim()}`);
+      if (oneLine(n.outfit)) state.push(`着装:${oneLine(n.outfit)}`);
+      if (oneLine(n.condition)) state.push(`状态:${oneLine(n.condition)}`);
       const stateStr = state.length ? ` 〔${state.join(';')}〕` : '';
       return `  - ${star}${n.name}${place}${title}${stateStr}`;
     })
@@ -620,7 +628,7 @@ export function fmtResolvedPlans(plans: MemPlan[]): string {
       if (p.createdTime?.trim()) parts.push(`立于 ${p.createdTime.trim()}`);
       if (p.targetTime?.trim()) parts.push(`目标 ${p.targetTime.trim()}`);
       const time = parts.length ? `(${parts.join(' · ')})` : '';
-      return `  - [${p.kind === 'suspense' ? '悬念' : '计划'}] ${p.content}${time}`;
+      return `  - [${p.kind === 'suspense' ? '悬念' : '计划'}] ${oneLine(p.content)}${time}`;
     })
     .join('\n');
 }
@@ -634,7 +642,7 @@ export function fmtPlans(plans: BuildArgs['openPlans']): string {
       if (p.createdTime?.trim()) parts.push(`立于 ${p.createdTime.trim()}`);
       if (p.targetTime?.trim()) parts.push(`目标 ${p.targetTime.trim()}`);
       const time = parts.length ? `(${parts.join(' · ')})` : '';
-      return `  p${idx + 1}. [${p.kind === 'suspense' ? '悬念' : '计划'}] ${p.content}${time}`;
+      return `  p${idx + 1}. [${p.kind === 'suspense' ? '悬念' : '计划'}] ${oneLine(p.content)}${time}`;
     })
     .join('\n');
 }

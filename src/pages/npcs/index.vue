@@ -352,11 +352,11 @@ function confirmRemove() {
         </label>
         <label class="bbs-modal-field">
           <span class="bbs-modal-label">身份(职业 / 与主角的关系)</span>
-          <input v-model="draft.title" class="bbs-input" type="text" placeholder="如:归雁客栈掌柜、青梅竹马" />
+          <textarea v-model="draft.title" v-autosize class="bbs-input bbs-modal-textarea bbs-modal-autogrow" rows="1" placeholder="如:归雁客栈掌柜、青梅竹马"></textarea>
         </label>
         <label class="bbs-modal-field">
           <span class="bbs-modal-label">性格</span>
-          <input v-model="draft.personality" class="bbs-input" type="text" placeholder="如:沉默寡言、护短" />
+          <textarea v-model="draft.personality" v-autosize class="bbs-input bbs-modal-textarea bbs-modal-autogrow" rows="1" placeholder="如:沉默寡言、护短"></textarea>
         </label>
         <label class="bbs-modal-field">
           <span class="bbs-modal-label">外貌描述(固定特征:发色 / 身材 / 疤痕,勿写穿着)</span>
@@ -364,11 +364,11 @@ function confirmRemove() {
         </label>
         <label class="bbs-modal-field">
           <span class="bbs-modal-label">当前着装(会随剧情变化)</span>
-          <input v-model="draft.outfit" class="bbs-input" type="text" placeholder="如:红斗篷、佩长剑" />
+          <textarea v-model="draft.outfit" v-autosize class="bbs-input bbs-modal-textarea bbs-modal-autogrow" rows="1" placeholder="如:红斗篷、佩长剑"></textarea>
         </label>
         <label class="bbs-modal-field">
           <span class="bbs-modal-label">当前状态(受伤 / 疲惫等,无则留空)</span>
-          <input v-model="draft.condition" class="bbs-input" type="text" placeholder="可选" />
+          <textarea v-model="draft.condition" v-autosize class="bbs-input bbs-modal-textarea bbs-modal-autogrow" rows="1" placeholder="可选"></textarea>
         </label>
         <label class="bbs-modal-field bbs-modal-check">
           <input v-model="draft.important" type="checkbox" class="bbs-checkbox" />
@@ -380,7 +380,7 @@ function confirmRemove() {
         </label>
         <label v-if="!draft.follow" class="bbs-modal-field">
           <span class="bbs-modal-label">所在地点</span>
-          <input v-model="draft.location" class="bbs-input" type="text" placeholder="如:归雁客栈、王宫" />
+          <textarea v-model="draft.location" v-autosize class="bbs-input bbs-modal-textarea bbs-modal-autogrow" rows="1" placeholder="如:归雁客栈、王宫"></textarea>
         </label>
         <footer class="bbs-modal-foot">
           <button class="bbs-btn" type="button" @click="closeComposer">取消</button>
@@ -402,11 +402,11 @@ function confirmRemove() {
         </label>
         <label class="bbs-modal-field">
           <span class="bbs-modal-label">身份(职业 / 与主角的关系)</span>
-          <input v-model="editing.title" class="bbs-input" type="text" placeholder="如:归雁客栈掌柜、青梅竹马" />
+          <textarea v-model="editing.title" v-autosize class="bbs-input bbs-modal-textarea bbs-modal-autogrow" rows="1" placeholder="如:归雁客栈掌柜、青梅竹马"></textarea>
         </label>
         <label class="bbs-modal-field">
           <span class="bbs-modal-label">性格</span>
-          <input v-model="editing.personality" class="bbs-input" type="text" placeholder="如:沉默寡言、护短" />
+          <textarea v-model="editing.personality" v-autosize class="bbs-input bbs-modal-textarea bbs-modal-autogrow" rows="1" placeholder="如:沉默寡言、护短"></textarea>
         </label>
         <label class="bbs-modal-field">
           <span class="bbs-modal-label">外貌描述(固定特征:发色 / 身材 / 疤痕,勿写穿着)</span>
@@ -414,11 +414,11 @@ function confirmRemove() {
         </label>
         <label class="bbs-modal-field">
           <span class="bbs-modal-label">当前着装(会随剧情变化)</span>
-          <input v-model="editing.outfit" class="bbs-input" type="text" placeholder="如:红斗篷、佩长剑" />
+          <textarea v-model="editing.outfit" v-autosize class="bbs-input bbs-modal-textarea bbs-modal-autogrow" rows="1" placeholder="如:红斗篷、佩长剑"></textarea>
         </label>
         <label class="bbs-modal-field">
           <span class="bbs-modal-label">当前状态(受伤 / 疲惫等,无则留空)</span>
-          <input v-model="editing.condition" class="bbs-input" type="text" placeholder="可选" />
+          <textarea v-model="editing.condition" v-autosize class="bbs-input bbs-modal-textarea bbs-modal-autogrow" rows="1" placeholder="可选"></textarea>
         </label>
         <label class="bbs-modal-field bbs-modal-check">
           <input v-model="editing.important" type="checkbox" class="bbs-checkbox" />
@@ -430,7 +430,7 @@ function confirmRemove() {
         </label>
         <label v-if="!editing.follow" class="bbs-modal-field">
           <span class="bbs-modal-label">所在地点</span>
-          <input v-model="editing.location" class="bbs-input" type="text" placeholder="如:归雁客栈、王宫" />
+          <textarea v-model="editing.location" v-autosize class="bbs-input bbs-modal-textarea bbs-modal-autogrow" rows="1" placeholder="如:归雁客栈、王宫"></textarea>
         </label>
         <footer class="bbs-modal-foot">
           <button class="bbs-btn" type="button" @click="cancelEdit">取消</button>
@@ -749,6 +749,14 @@ function confirmRemove() {
   resize: vertical;
   min-height: 60px;
   font-family: inherit;
+}
+/* 自适应高度:默认贴合一行,内容多才长高(v-autosize 量 scrollHeight 写回);
+   min-height 归零、resize 交给指令,封顶后滚动。 */
+.bbs-modal-autogrow {
+  resize: none;
+  min-height: 0;
+  max-height: 140px;
+  overflow-y: auto;
 }
 .bbs-modal-check {
   flex-direction: row;

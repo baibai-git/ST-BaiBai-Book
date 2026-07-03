@@ -290,7 +290,7 @@ function fmtSceneContext(scenes: MemScene[], here: string, locationPath?: string
   const lines: string[] = [];
   if (chain.length) {
     const detailed = chain
-      .map(n => (n.desc ? `${n.name}(${n.desc})` : n.name))
+      .map(n => (oneLine(n.desc) ? `${n.name}(${oneLine(n.desc)})` : n.name))
       .join(' › ');
     lines.push(`当前所在(由大到小):${detailed}`);
   }
@@ -304,14 +304,24 @@ function fmtSceneContext(scenes: MemScene[], here: string, locationPath?: string
   return lines.join('\n');
 }
 
+/**
+ * 单行化:把值里的换行/回车折叠成空格。
+ * NPC 名册是「一个角色一行、字段用 ;/—— 拼接」的格式,值内含换行会把一条信息拆成多行、
+ * 后续行丢掉「  - 」前缀,破坏注入结构、误导 AI。故所有内联字段渲染前都过此函数。
+ * (UI 里字段可软换行显示,但注入必须压平——trim 只去首尾,拦不住中间换行。)
+ */
+function oneLine(s: string | undefined): string {
+  return (s ?? '').replace(/\s*[\r\n]+\s*/g, ' ').trim();
+}
+
 /** 把 NPC 的「即时状态」(着装/状态/所在)拼成一段尾注;无则空串。供在场与主要角色组复用。 */
 function npcStateTail(n: MemNpc, withPlace: boolean): string {
   const tail: string[] = [];
-  if (n.outfit?.trim()) tail.push(`着装:${n.outfit.trim()}`);
-  if (n.condition?.trim()) tail.push(`状态:${n.condition.trim()}`);
+  if (oneLine(n.outfit)) tail.push(`着装:${oneLine(n.outfit)}`);
+  if (oneLine(n.condition)) tail.push(`状态:${oneLine(n.condition)}`);
   if (withPlace) {
     if (n.follow) tail.push('随行');
-    else if (n.location?.trim()) tail.push(`在:${n.location.trim()}`);
+    else if (oneLine(n.location)) tail.push(`在:${oneLine(n.location)}`);
   }
   return tail.length ? ` 〔${tail.join(';')}〕` : '';
 }
@@ -344,7 +354,7 @@ function fmtNpcContext(npcs: MemNpc[], scenes: MemScene[], here: string, locatio
     // 主要角色:状态面板优先。身份留一句帮定位,外貌/性格从简(卡里通常已有),重点是即时状态。
     const detailed = main
       .map(n => {
-        const head = n.title?.trim() ? `${n.name}(${n.title.trim()})` : n.name;
+        const head = oneLine(n.title) ? `${n.name}(${oneLine(n.title)})` : n.name;
         return `  - ${head}${npcStateTail(n, true)}`;
       })
       .join('\n');
@@ -354,10 +364,10 @@ function fmtNpcContext(npcs: MemNpc[], scenes: MemScene[], here: string, locatio
     const detailed = present
       .map(n => {
         const parts = [n.name];
-        if (n.title?.trim()) parts.push(`(${n.title.trim()})`);
+        if (oneLine(n.title)) parts.push(`(${oneLine(n.title)})`);
         const profile: string[] = [];
-        if (n.personality?.trim()) profile.push(`性格:${n.personality.trim()}`);
-        if (n.desc?.trim()) profile.push(n.desc.trim());
+        if (oneLine(n.personality)) profile.push(`性格:${oneLine(n.personality)}`);
+        if (oneLine(n.desc)) profile.push(oneLine(n.desc));
         const profileStr = profile.length ? ` —— ${profile.join(';')}` : '';
         const place = n.follow ? ' [随行]' : '';
         return `  - ${parts.join('')}${place}${profileStr}${npcStateTail(n, false)}`;
@@ -369,9 +379,9 @@ function fmtNpcContext(npcs: MemNpc[], scenes: MemScene[], here: string, locatio
     // 同区域:名 + 身份 + 性格 + 所在地;砍掉外貌/即时状态。留性格以稳住临时出场时的人设。
     const brief = nearby
       .map(n => {
-        const title = n.title?.trim() ? `(${n.title.trim()})` : '';
-        const pers = n.personality?.trim() ? ` —— 性格:${n.personality.trim()}` : '';
-        const place = n.location?.trim() ? ` [在:${n.location.trim()}]` : '';
+        const title = oneLine(n.title) ? `(${oneLine(n.title)})` : '';
+        const pers = oneLine(n.personality) ? ` —— 性格:${oneLine(n.personality)}` : '';
+        const place = oneLine(n.location) ? ` [在:${oneLine(n.location)}]` : '';
         return `  - ${n.name}${title}${pers}${place}`;
       })
       .join('\n');
@@ -381,8 +391,9 @@ function fmtNpcContext(npcs: MemNpc[], scenes: MemScene[], here: string, locatio
     // 不在场:仅名 + 身份,按所在地括注;无外貌/性格/状态
     const brief = absent
       .map(n => {
-        const title = n.title?.trim() ? `(${n.title.trim()})` : '';
-        return `  - ${n.name}${title}${n.location ? ` [在:${n.location}]` : ''}`;
+        const title = oneLine(n.title) ? `(${oneLine(n.title)})` : '';
+        const loc = oneLine(n.location);
+        return `  - ${n.name}${title}${loc ? ` [在:${loc}]` : ''}`;
       })
       .join('\n');
     lines.push(`其他已知角色(不在当前场景,仅名与身份):\n${brief}`);
@@ -398,7 +409,7 @@ export function buildStateInjectionText(): string {
     const wd = weekdayLabel(memory.state.time);
     st.push(`当前时间:${memory.state.time}${wd ? ` (${wd})` : ''}`);
   }
-  if (memory.state.location) st.push(`当前地点:${memory.state.location}`);
+  if (memory.state.location) st.push(`当前地点:${oneLine(memory.state.location)}`);
 
   const here = memory.state.location || '';
   const locPath = memory.state.locationPath;
@@ -416,7 +427,7 @@ export function buildStateInjectionText(): string {
   if (elsewhere.length) {
     // 仅名+数量,按地点括注;无描述
     const brief = elsewhere
-      .map(i => `  - ${i.name}${typeof i.qty === 'number' ? ` ×${i.qty}` : ''}(存:${i.location || '某处'})`)
+      .map(i => `  - ${i.name}${typeof i.qty === 'number' ? ` ×${i.qty}` : ''}(存:${oneLine(i.location) || '某处'})`)
       .join('\n');
     st.push(`他处寄存物品(回到对应地点才有完整信息):\n${brief}`);
   }
