@@ -18,6 +18,8 @@ export const START_TAG = 'bbs_start';
 export const END_TAG = 'bbs_end';
 /** 物品变动旁注标签:摘要后把本楼物品净变动写进正文 </bbs_end> 之后,供窗口内全文楼层被主模型看到 */
 export const ITEMS_TAG = 'bbs_items';
+/** 变量变动旁注标签:与 bbs_items 同机制,写本楼自定义变量净变动,供主模型看到「已改过」防重复改 */
+export const VARS_TAG = 'bbs_vars';
 
 /** 注入主对话的固定提示词默认值(可在设置里覆盖)。 */
 export const TIME_TAG_PROMPT = `【时间锚点要求(系统强制)】
@@ -145,7 +147,8 @@ export function clampToTimeTags(mes: string): string {
     .replace(RE_THINK_BLOCK, '') // 思维链
     .replace(/<!--[\s\S]+?-->/g, '') // HTML 注释
     .replace(/<horae[\s\S]*?>[\s\S]*?<\/horae[\s\S]*?>/gi, '') // 旧 horae 格式
-    .replace(RE_ITEMS_BLOCK, ''); // 物品变动旁注(插件写进正文,不该进摘要/索引)
+    .replace(RE_ITEMS_BLOCK, '') // 物品变动旁注(插件写进正文,不该进摘要/索引)
+    .replace(RE_VARS_BLOCK, ''); // 变量变动旁注(同上)
   s = stripCustomTags(s); // 用户自定义标签
 
   // 最后一个 <bbs_start> 的位置:全局扫一遍取末次
@@ -287,6 +290,43 @@ export function readItemsTagText(mes: string): string | null {
   return m ? m[1].trim() : null;
 }
 
+// 变量变动块:删旧用(整段,含标签)
+const RE_VARS_BLOCK = new RegExp(`\\n*<${VARS_TAG}\\b[^>]*>[\\s\\S]*?</${VARS_TAG}>`, 'gi');
+// 定位物品块结束位置用(变量块紧随物品块之后):取末次
+const RE_ITEMS_CLOSE_G = new RegExp(`</${ITEMS_TAG}>`, 'gi');
+
+/**
+ * 把变量变动旁注写进正文:先删旧 <bbs_vars> 块(幂等),再插到**物品块之后**(无物品块则最后一个 </bbs_end> 之后,
+ * 再无则追加末尾)。与 writeItemLogTag 同款,只是插入锚点优先物品块,让 items/vars 两块相邻、排版稳定。
+ * inline 为空 → 只清旧块不写新块。返回处理后的正文。
+ */
+export function writeVarLogTag(mes: string, inline: string): string {
+  const s = String(mes ?? '').replace(RE_VARS_BLOCK, '');
+  const text = inline.trim();
+  if (!text) return s;
+  const block = `<${VARS_TAG}>\n${text}\n</${VARS_TAG}>`;
+  // 锚点优先:最后一个 </bbs_items> 结束位置;否则最后一个 </bbs_end>;都无则追加末尾
+  const lastOf = (re: RegExp): number => {
+    let last = -1;
+    re.lastIndex = 0;
+    for (let m = re.exec(s); m; m = re.exec(s)) last = m.index + m[0].length;
+    return last;
+  };
+  const anchor = lastOf(RE_ITEMS_CLOSE_G);
+  const pos = anchor >= 0 ? anchor : lastOf(RE_END_CLOSE_G);
+  if (pos >= 0) return `${s.slice(0, pos)}\n${block}${s.slice(pos)}`;
+  return `${s.trimEnd()}\n${block}`;
+}
+
+// 提取 <bbs_vars> 块内文本用
+const RE_VARS_INNER = new RegExp(`<${VARS_TAG}\\b[^>]*>([\\s\\S]*?)</${VARS_TAG}>`, 'i');
+
+/** 读取正文里的 <bbs_vars> 块内文本(去首尾空白);无块返回 null(供反解析判断用户是否删了整块)。 */
+export function readVarsTagText(mes: string): string | null {
+  const m = String(mes ?? '').match(RE_VARS_INNER);
+  return m ? m[1].trim() : null;
+}
+
 /* ============ 自动注册「仅显示层隐藏」正则到 ST ============ */
 
 // ST 全局正则脚本存在 extension_settings.regex(数组)。我们用固定 id 标识自己这条,做到幂等。
@@ -299,9 +339,10 @@ const PLACEMENT_MD_DISPLAY = 0;
 const PLACEMENT_USER_INPUT = 1;
 const PLACEMENT_AI_OUTPUT = 2;
 
-/** 一条同时吃掉 start/end/items 标签(含其内部内容)的正则字符串(ST 用 /pattern/flags 形式) */
+/** 一条同时吃掉 start/end/items/vars 标签(含其内部内容)的正则字符串(ST 用 /pattern/flags 形式) */
 function hideFindRegex(): string {
-  return `/<\\/?(?:${START_TAG}|${END_TAG}|${ITEMS_TAG})\\b[^>]*>(?:[\\s\\S]*?<\\/(?:${START_TAG}|${END_TAG}|${ITEMS_TAG})>)?/gi`;
+  const tags = `${START_TAG}|${END_TAG}|${ITEMS_TAG}|${VARS_TAG}`;
+  return `/<\\/?(?:${tags})\\b[^>]*>(?:[\\s\\S]*?<\\/(?:${tags})>)?/gi`;
 }
 
 /**

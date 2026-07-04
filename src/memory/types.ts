@@ -57,6 +57,76 @@ export interface ItemLogEntry {
   time: string;
 }
 
+/* ============ 自定义变量(MVU 式:一个 JSON 对象 + 路径命令) ============ */
+
+/** JSON 值。自定义变量的「状态」就是一棵这样的树,AI 用路径命令自由增删改。 */
+export type JsonValue = null | boolean | number | string | JsonValue[] | { [k: string]: JsonValue };
+
+/**
+ * 变量的作用域层级。**只影响「初始模板存哪」,值永远每聊天独立**(从各聊天自己的叶子 varOps 重放):
+ *  - global:所有角色所有聊天共享模板(存 extension_settings)。
+ *  - char:当前角色的所有聊天共享模板(存 extension_settings,按角色 avatar 区分)。
+ *  - chat:仅当前聊天(存 chatMetadata,默认档)。
+ * 载入时三层模板深合并(chat > char > global)成初始状态;命令(delta)只存叶子(chat),故值天然每聊天独立。
+ */
+export type VarTier = 'global' | 'char' | 'chat';
+
+/**
+ * 一层的变量「定义」= 初始结构模板 + 给 AI 的说明(拆两段)。三层各一份,载入时深合并成初始状态。
+ *  - json:初始 JSON(根须是对象),用户预先搭好想追踪的结构(可留空对象,让 AI 从零建)。
+ *  - meaning:各字段**是什么**(含义/取值范围)。主API(写正文)与副API(摘要)都会拿到——
+ *    主API据此理解当前值,只读参考。
+ *  - rule:**何时怎么改**、可否新建对象(相当于 MVU 的变化条件/命令约定)。**只发副API**——
+ *    它含「如何增删改」的指令,主API看到会误以为要在正文里输出/复述变量,故对主API屏蔽。
+ */
+export interface VarTemplate {
+  json: Record<string, JsonValue>;
+  meaning: string;
+  rule: string;
+}
+
+/**
+ * 路径命令(AI 与手动共用;固化进叶子 delta.varOps,按楼层重放)。仿 MVU 的 set/assign/remove/add:
+ *  - set:把 path 处的值设为 value(自动创建中间层)。path='' 表示整棵根。
+ *  - assign:往 path 处的对象/数组插入。给 key 则 obj[key]=value(数组则该下标);不给 key 则数组 push value。
+ *  - remove:删除。给 key 删对象键 / 数组下标 / 数组里等于 key 的元素;不给 key 删 path 本身。
+ *  - add:把 path 处的数字加上 delta(负数即减)。
+ */
+export interface VarOp {
+  op: 'set' | 'assign' | 'remove' | 'add';
+  /** 点/括号寻址,如 "势力.魔法议会.声望" 或 "队伍[0].hp";'' = 根 */
+  path: string;
+  /** assign/remove 用:对象键或数组下标(或数组里要删的值) */
+  key?: string | number;
+  /** set/assign 用:要写入的值 */
+  value?: JsonValue;
+  /** add 用:数字增量 */
+  delta?: number;
+}
+
+/** 把任意来源规整成一份变量模板(json 须对象;json 允许传字符串,尝试解析)。纯函数,供 settings/store 共用。 */
+export function normalizeTemplate(raw: unknown): VarTemplate {
+  let json: Record<string, JsonValue> = {};
+  let meaning = '';
+  let rule = '';
+  if (raw && typeof raw === 'object') {
+    const o = raw as Record<string, unknown>;
+    if (o.json && typeof o.json === 'object' && !Array.isArray(o.json)) {
+      json = o.json as Record<string, JsonValue>;
+    } else if (typeof o.json === 'string') {
+      try {
+        const p = JSON.parse(o.json);
+        if (p && typeof p === 'object' && !Array.isArray(p)) json = p;
+      } catch { /* 非法 JSON → 空对象 */ }
+    }
+    if (typeof o.meaning === 'string') meaning = o.meaning;
+    if (typeof o.rule === 'string') rule = o.rule;
+    // 兼容:外部分享的旧格式只有单一 guide 时,并入 rule(含义可留空,不影响使用)。
+    if (!meaning && !rule && typeof o.guide === 'string') rule = o.guide;
+  }
+  return { json, meaning, rule };
+}
+
 /**
  * 场景 / 地点(派生产物,不持久化)。
  * 纯地理层级:地点 ∈ 上级区域,用确定性 id 串成嵌套树(删/陈旧叶子→delta 不重放→树自动回退)。
@@ -230,6 +300,10 @@ export interface BaibaiMemory {
   npcs: MemNpc[];
   /** 派生缓存:近期物品变动日志(重放时产出,只留最近若干条) */
   itemLog: ItemLogEntry[];
+  /** 真源镜像:三层变量定义模板(global/char 来自 settings,chat 来自 chatMetadata) */
+  varTemplates: Record<VarTier, VarTemplate>;
+  /** 派生缓存:变量当前状态(从合并模板起、fold 各叶子 varOps 得到的 JSON 树) */
+  vars: Record<string, JsonValue>;
   /** 真源:叶子摘要森林 */
   summaries: MemSummary[];
 }
@@ -243,6 +317,8 @@ export function createEmptyMemory(): BaibaiMemory {
     scenes: [],
     npcs: [],
     itemLog: [],
+    varTemplates: { global: { json: {}, meaning: '', rule: '' }, char: { json: {}, meaning: '', rule: '' }, chat: { json: {}, meaning: '', rule: '' } },
+    vars: {},
     summaries: [],
   };
 }
@@ -349,6 +425,14 @@ export interface SummaryDelta {
     /** 按提示词里展示的短 id(p1/p2…)了结 */
     resolve?: string[];
   };
+  /**
+   * 指令型:自定义变量的路径命令数组(仿 MVU)。AI 看当前 JSON 状态 + 说明,产出本楼新事件对应的命令:
+   *  - { "op":"set", "path":"好感度", "value":60 }
+   *  - { "op":"add", "path":"好感度", "delta":5 }
+   *  - { "op":"assign", "path":"势力", "key":"魔法议会", "value":{ "立场":"中立", "声望":50 } }  // 新建对象
+   *  - { "op":"remove", "path":"势力", "key":"暗影会" }
+   */
+  vars?: VarOp[];
 }
 
 /**
@@ -391,4 +475,6 @@ export interface StoredDelta {
     /** 内部/手动:重新开启已了结 plan(稳定 id) */
     reopen?: string[];
   };
+  /** 自定义变量:本楼的路径命令序列(按顺序 fold 到 JSON 状态)。AI 与手动共用。 */
+  varOps?: VarOp[];
 }

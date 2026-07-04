@@ -1,4 +1,5 @@
 import { getContext } from '@/st/context';
+import { normalizeTemplate, type VarTemplate } from '@/memory/types';
 import { reactive, watch } from 'vue';
 
 /**
@@ -186,6 +187,10 @@ export interface ApiSettings {
    * 旁注等格式。改动对**召回时**即时生效(向量库存的是原文,召回再清洗),无需重建索引。
    */
   customStripTags: string[];
+  /** 全局变量模板:所有角色所有聊天共享的初始 JSON 结构 + 说明(值仍每聊天独立)。见 memory 的 VarTier。 */
+  varsGlobalTemplate: VarTemplate;
+  /** 角色变量模板:键=角色卡 avatar 文件名,值=该角色所有聊天共享的初始模板(值仍每聊天独立)。 */
+  varsTemplateByChar: Record<string, VarTemplate>;
 }
 
 // extension_settings 里的命名空间键;localStorage 是旧版残留,仅用于一次性迁移。
@@ -262,6 +267,8 @@ function defaults(): ApiSettings {
     batchMaxChars: 30000,
     batchMaxFloors: 10,
     customStripTags: [],
+    varsGlobalTemplate: { json: {}, meaning: '', rule: '' },
+    varsTemplateByChar: {},
   };
 }
 
@@ -360,6 +367,17 @@ function normalize(raw: unknown): ApiSettings {
         ),
       )
     : [];
+  // 变量模板:全局深规整;角色按 avatar 键逐份规整(丢弃空模板的键,保持存储干净)
+  merged.varsGlobalTemplate = normalizeTemplate((raw as Partial<ApiSettings>).varsGlobalTemplate);
+  const rawByChar = (raw as Partial<ApiSettings>).varsTemplateByChar;
+  const byChar: Record<string, VarTemplate> = {};
+  if (rawByChar && typeof rawByChar === 'object') {
+    for (const [k, v] of Object.entries(rawByChar)) {
+      const tpl = normalizeTemplate(v);
+      if (Object.keys(tpl.json).length || tpl.meaning.trim() || tpl.rule.trim()) byChar[k] = tpl; // 非空才留
+    }
+  }
+  merged.varsTemplateByChar = byChar;
   return merged;
 }
 
@@ -453,6 +471,8 @@ function applyInto(target: ApiSettings, src: ApiSettings): void {
   target.batchMaxChars = src.batchMaxChars;
   target.batchMaxFloors = src.batchMaxFloors;
   target.customStripTags = src.customStripTags;
+  target.varsGlobalTemplate = src.varsGlobalTemplate;
+  target.varsTemplateByChar = src.varsTemplateByChar;
 }
 
 /** 写回 extension_settings 并防抖落盘到服务器(跨设备同步的关键)。 */
@@ -566,6 +586,19 @@ export function currentCharName(): string | null {
   if (idx === undefined || idx === null || idx === '') return null;
   const ch = ctx.characters?.[Number(idx)];
   return ch?.name ?? null;
+}
+
+/**
+ * 当前角色的稳定键:avatar 文件名(唯一,重名卡也不冲突);取不到回退角色名。
+ * 用于角色层变量定义的存储键(varsByChar[key])。群聊 / 未进入聊天返回 null(角色层此时不适用)。
+ */
+export function currentCharKey(): string | null {
+  const ctx = getContext();
+  if (!ctx || ctx.groupId) return null; // 群聊无单一角色
+  const idx = ctx.characterId;
+  if (idx === undefined || idx === null || idx === '') return null;
+  const ch = ctx.characters?.[Number(idx)] as { avatar?: string; name?: string } | undefined;
+  return ch?.avatar || ch?.name || null;
 }
 
 /**

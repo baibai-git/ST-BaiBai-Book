@@ -1,10 +1,11 @@
+import { apiSettings, currentCharKey } from '@/api/settings';
 import { getContext, type STMessage } from '@/st/context';
 import { reactive } from 'vue';
 import { deriveMemory, getLeaf, leafValid } from './apply';
 import { isAiFloor, pendingAiFloors } from './engine';
 import { latestStoryTime } from './timeTag';
-import type { BaibaiMemory, LeafExtra, MemSummary, StoredDelta } from './types';
-import { createEmptyMemory, MEMORY_KEY, MEMORY_VERSION } from './types';
+import type { BaibaiMemory, LeafExtra, MemSummary, StoredDelta, VarTemplate, VarTier } from './types';
+import { createEmptyMemory, MEMORY_KEY, MEMORY_VERSION, normalizeTemplate } from './types';
 
 /**
  * 响应式记忆镜像。
@@ -55,6 +56,9 @@ export function recomputeDerived(): void {
   memory.scenes.splice(0, memory.scenes.length, ...d.scenes);
   memory.npcs.splice(0, memory.npcs.length, ...d.npcs);
   memory.itemLog.splice(0, memory.itemLog.length, ...d.itemLog);
+  // vars 是 JSON 对象:清空后按派生结果重填(不换 reactive 引用,保持页面响应式绑定)
+  for (const k of Object.keys(memory.vars)) delete memory.vars[k];
+  Object.assign(memory.vars, d.vars);
 
   // derivedMeta:扫 chat 收集叶子(含陈旧)
   const leaves: LeafView[] = [];
@@ -111,13 +115,17 @@ export function flushLeavesNow(): void {
   void ctx?.saveChat?.();
 }
 
-/** 把森林(压缩节点)写回 chat_metadata 并持久化。叶子不在这里。 */
+/**
+ * 把森林(压缩节点)+ **仅 chat 层**变量模板写回 chat_metadata 并持久化。
+ * 全局/角色层的模板不在这里(它们存 extension_settings,由 replaceVarsTemplate 落盘)。叶子也不在这里。
+ */
 export function saveMemory() {
   const ctx = getContext();
   if (!ctx?.chatMetadata) return;
-  const snapshot: { version: number; summaries: MemSummary[] } = {
+  const snapshot: { version: number; summaries: MemSummary[]; varsTemplate: VarTemplate } = {
     version: MEMORY_VERSION,
     summaries: JSON.parse(JSON.stringify(memory.summaries)),
+    varsTemplate: JSON.parse(JSON.stringify(memory.varTemplates.chat)),
   };
   (ctx.chatMetadata as Record<string, unknown>)[MEMORY_KEY] = snapshot;
   ctx.saveMetadataDebounced?.();
@@ -245,26 +253,39 @@ function mergeStoredDelta(a: StoredDelta, b: StoredDelta): void {
 
 /* ============ 载入 / 保存 ============ */
 
-function assignForest(target: BaibaiMemory, summaries: MemSummary[]) {
+function assignForest(target: BaibaiMemory, summaries: MemSummary[], varTemplates: Record<VarTier, VarTemplate>) {
   target.version = MEMORY_VERSION;
   target.summaries = summaries;
+  target.varTemplates = varTemplates;
 }
 
-/** 从当前聊天载入森林 + 重算派生(必要时迁移) */
+/** 读三层变量模板(chat 来自传入的 chatMetadata 原始值;global/char 来自 settings)。 */
+function loadVarTemplates(rawChatTemplate: unknown): Record<VarTier, VarTemplate> {
+  const key = currentCharKey();
+  return {
+    global: normalizeTemplate(apiSettings.varsGlobalTemplate),
+    char: key ? normalizeTemplate(apiSettings.varsTemplateByChar[key]) : { json: {}, meaning: '', rule: '' },
+    chat: normalizeTemplate(rawChatTemplate),
+  };
+}
+
+/** 从当前聊天载入森林 + 三层变量模板 + 重算派生(必要时迁移) */
 export function loadMemory() {
   const ctx = getContext();
   const meta = ctx?.chatMetadata as Record<string, unknown> | undefined;
   const raw = meta?.[MEMORY_KEY] as Record<string, unknown> | undefined;
   const chat = ctx?.chat ?? null;
+  // 变量模板与 summary 迁移正交:chat 层从 metadata 直读,再取全局/角色层(缺失=空模板)
+  const varTemplates = loadVarTemplates(raw?.varsTemplate);
 
   if (raw && typeof raw === 'object') {
     const version = typeof raw.version === 'number' ? raw.version : 1;
     if (version >= MEMORY_VERSION) {
-      assignForest(memory, (Array.isArray(raw.summaries) ? raw.summaries : []) as MemSummary[]);
+      assignForest(memory, (Array.isArray(raw.summaries) ? raw.summaries : []) as MemSummary[], varTemplates);
     } else {
       const migrated = migrateV2toV3(raw, chat);
       if (migrated) {
-        assignForest(memory, migrated.summaries);
+        assignForest(memory, migrated.summaries, varTemplates);
         // 先把叶子落盘(saveChat)成功,再升 version 写 metadata,保证可重入
         flushLeavesNow();
         saveMemory();
@@ -273,11 +294,36 @@ export function loadMemory() {
         const comps = (Array.isArray(raw.summaries) ? raw.summaries : []).filter(
           (s: Record<string, unknown>) => (typeof s.level === 'number' ? s.level : 0) >= 1,
         ) as MemSummary[];
-        assignForest(memory, comps);
+        assignForest(memory, comps, varTemplates);
       }
     }
   } else {
-    assignForest(memory, []);
+    assignForest(memory, [], varTemplates);
+  }
+  recomputeDerived();
+}
+
+/**
+ * 替换某一层的变量模板(供变量页编辑器保存):写回对应存储 → 更新内存 → 重算派生。
+ *  - global → apiSettings.varsGlobalTemplate(跨设备同步);
+ *  - char → apiSettings.varsTemplateByChar[avatar](无当前角色则忽略,UI 已禁用);
+ *  - chat → chatMetadata(经 saveMemory)。
+ * 模板变化只改「初始状态」,历史命令照旧重放(所以改初始值会影响整条聊天的当前值)。
+ * 注:注入刷新由调用方(页面)负责 refreshInjection —— store 不引 inject 避免循环依赖。
+ */
+export function replaceVarsTemplate(tier: VarTier, tpl: VarTemplate): void {
+  const norm = normalizeTemplate(tpl);
+  memory.varTemplates[tier] = norm;
+  if (tier === 'global') {
+    apiSettings.varsGlobalTemplate = norm;
+  } else if (tier === 'char') {
+    const key = currentCharKey();
+    if (key) {
+      if (Object.keys(norm.json).length || norm.meaning.trim() || norm.rule.trim()) apiSettings.varsTemplateByChar[key] = norm;
+      else delete apiSettings.varsTemplateByChar[key]; // 清空则移除键,不留空壳
+    }
+  } else {
+    saveMemory(); // chat 层写 chatMetadata
   }
   recomputeDerived();
 }

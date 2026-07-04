@@ -17,11 +17,11 @@
 import { computed, nextTick, reactive, ref, watch } from 'vue';
 import Icon from '@/components/Icon.vue';
 import { getContext, type STMessage } from '@/st/context';
-import { getLeaf, leafValid, deleteLeafAt, editLeafFull, planContentById } from '@/memory/apply';
+import { getLeaf, leafValid, deleteLeafAt, editLeafFull, planContentById, describeVarOp } from '@/memory/apply';
 import { setFloorOmit } from '@/memory/engine';
 import { derivedMeta } from '@/memory/store';
 import { ui } from '@/state/ui';
-import type { LeafExtra, StoredDelta, ItemDelta, NpcDelta } from '@/memory/types';
+import type { LeafExtra, StoredDelta, ItemDelta, NpcDelta, VarOp, JsonValue } from '@/memory/types';
 
 const props = defineProps<{ floor: number; sig: { tick: number } }>();
 
@@ -170,9 +170,39 @@ function planLabel(verb: string, id: string): string {
   const c = planContentById(id);
   return c ? `${verb}:${c}` : `${verb}一项`;
 }
+// 变量变动:varOps 是扁平命令数组(非 add/update/remove 分桶),逐条映射成标签。
+// op 复用现有徽标语义:set/add=更新(中性)、assign=新增(强调)、remove=移除(危险)。
+// 可就地编辑(按命令类型暴露不同字段,见模板 var 分支);删除走 deleteTag 的 var 特判。
+const VAR_OP_TO_TAGOP: Record<VarOp['op'], Op> = { set: 'update', add: 'update', assign: 'add', remove: 'remove' };
+const varTags = computed<Tag[]>(() => {
+  const ops = d.value?.varOps;
+  if (!ops?.length) return [];
+  return ops.map((op, i) => {
+    const { text, sub } = describeVarOp(op);
+    return { key: `var:op:${i}`, op: VAR_OP_TO_TAGOP[op.op], bucket: 'op', idx: i, text, sub, editable: true };
+  });
+});
+// 正在编辑的变量命令(供模板按 op 类型决定显示哪些字段:值/增量/键)
+const editingVarOp = computed<VarOp | null>(() => {
+  const key = editKey.value;
+  if (!key || !key.startsWith('var:')) return null;
+  return d.value?.varOps?.[Number(key.split(':')[2])] ?? null;
+});
+// 值 ↔ 输入框互转:字符串原样;数字/布尔/对象转 JSON 文本。解析反之:先试 JSON,失败当纯字符串。
+// 故 "敌对"→字符串、"60"→数字、"true"→布尔、'{"a":1}'→对象,round-trip 稳定。
+function varValueToInput(v: JsonValue | undefined): string {
+  if (v === undefined) return '';
+  if (typeof v === 'string') return v;
+  try { return JSON.stringify(v); } catch { return String(v); }
+}
+function parseVarValue(text: string): JsonValue {
+  const t = text.trim();
+  if (t === '') return '';
+  try { return JSON.parse(t); } catch { return text; }
+}
 
 const hasAnyDelta = computed(
-  () => itemTags.value.length || npcTags.value.length || sceneTags.value.length || planTags.value.length || !!d.value?.location,
+  () => itemTags.value.length || npcTags.value.length || sceneTags.value.length || planTags.value.length || varTags.value.length || !!d.value?.location,
 );
 
 /* ============ 就地编辑 ============ */
@@ -185,6 +215,7 @@ const edit = reactive<{
   text: string; timeStart: string; timeEnd: string; location: string;
   name: string; qty: string; desc: string; content: string;
   title: string; outfit: string; condition: string; npcDesc: string; personality: string; npcLoc: string;
+  varPath: string; varKey: string; varValue: string; varDelta: string;
 }>({
   text: '',
   timeStart: '',
@@ -200,6 +231,10 @@ const edit = reactive<{
   npcDesc: '',
   personality: '',
   npcLoc: '',
+  varPath: '',
+  varKey: '',
+  varValue: '',
+  varDelta: '',
 });
 
 // 叶子消失 / 番外时退出编辑
@@ -338,6 +373,10 @@ function editTag(tag: Tag) {
   edit.npcDesc = '';
   edit.personality = '';
   edit.npcLoc = '';
+  edit.varPath = '';
+  edit.varKey = '';
+  edit.varValue = '';
+  edit.varDelta = '';
   if (tag.key.startsWith('item:')) {
     if (tag.bucket === 'remove') {
       edit.name = dd.items?.remove?.[tag.idx] ?? '';
@@ -362,6 +401,14 @@ function editTag(tag: Tag) {
     }
   } else if (tag.key.startsWith('plan:add:')) {
     edit.content = dd.plans?.add?.[tag.idx]?.content ?? '';
+  } else if (tag.key.startsWith('var:')) {
+    const op = dd.varOps?.[tag.idx];
+    if (op) {
+      edit.varPath = op.path ?? '';
+      edit.varKey = op.key !== undefined ? String(op.key) : '';
+      edit.varValue = varValueToInput(op.value);
+      edit.varDelta = typeof op.delta === 'number' ? String(op.delta) : '';
+    }
   }
   beginEdit(tag.key);
 }
@@ -406,6 +453,24 @@ function saveTag(tag: Tag) {
     } else if (tag.key.startsWith('plan:add:')) {
       const x = dd.plans?.add?.[tag.idx];
       if (x) x.content = edit.content.trim();
+    } else if (tag.key.startsWith('var:')) {
+      const op = dd.varOps?.[tag.idx];
+      if (op) {
+        op.path = edit.varPath.trim();
+        // 按命令类型写回对应字段(只改本类型有的字段,避免残留无关字段)
+        if (op.op === 'add') {
+          const n = Number(String(edit.varDelta).trim());
+          op.delta = Number.isFinite(n) ? n : 0;
+        }
+        if (op.op === 'set' || op.op === 'assign') {
+          op.value = parseVarValue(edit.varValue);
+        }
+        if (op.op === 'assign' || op.op === 'remove') {
+          const k = edit.varKey.trim();
+          if (k) op.key = k; // 纯数字键作数组下标由重放侧 Number() 兜底,存字符串即可
+          else delete op.key;
+        }
+      }
     }
   });
 }
@@ -414,6 +479,10 @@ function saveTag(tag: Tag) {
 function deleteTag(tag: Tag) {
   const [cat, bucket] = tag.key.split(':');
   commitDelta(dd => {
+    if (cat === 'var') {
+      if (Array.isArray(dd.varOps)) dd.varOps.splice(tag.idx, 1); // varOps 是扁平数组,直接按序号删
+      return;
+    }
     const group = (dd as Record<string, Record<string, unknown[]>>)[cat === 'item' ? 'items' : cat === 'npc' ? 'npcs' : cat === 'scene' ? 'scenes' : 'plans'];
     const arr = group?.[bucket];
     if (Array.isArray(arr)) arr.splice(tag.idx, 1);
@@ -461,6 +530,7 @@ const groups = computed(() => [
   { title: '角色', icon: 'npcs', tags: npcTags.value },
   { title: '场景', icon: 'scenes', tags: sceneTags.value },
   { title: '悬念簿', icon: 'plans', tags: planTags.value },
+  { title: '变量', icon: 'vars', tags: varTags.value },
 ]);
 </script>
 
@@ -596,14 +666,33 @@ const groups = computed(() => [
                             <textarea :ref="setFocus" v-model="edit.content" rows="1" class="bbs-input bbs-fp-nfield" placeholder="内容" @input="onTextInput" @keydown="onFieldKeydown"></textarea>
                           </label>
                         </template>
+                        <template v-else-if="tag.key.startsWith('var:')">
+                          <!-- 变量命令:按类型显示字段。路径恒有;set/assign 有「值」;add 有「增量」;assign/remove 有「键」 -->
+                          <label class="bbs-fp-nrow">
+                            <span class="bbs-fp-nlabel">路径</span>
+                            <textarea :ref="setFocus" v-model="edit.varPath" rows="1" class="bbs-input bbs-fp-nfield" placeholder="如 好感度 或 势力.魔法议会.声望" @input="onTextInput" @keydown="onFieldKeydown"></textarea>
+                          </label>
+                          <label v-if="editingVarOp?.op === 'assign' || editingVarOp?.op === 'remove'" class="bbs-fp-nrow">
+                            <span class="bbs-fp-nlabel">键</span>
+                            <textarea v-model="edit.varKey" rows="1" class="bbs-input bbs-fp-nfield" placeholder="对象键 / 数组下标" @input="onTextInput" @keydown="onFieldKeydown"></textarea>
+                          </label>
+                          <label v-if="editingVarOp?.op === 'add'" class="bbs-fp-nrow">
+                            <span class="bbs-fp-nlabel">增量</span>
+                            <input v-model="edit.varDelta" class="bbs-input bbs-fp-nfield bbs-fp-nfield-num" type="number" placeholder="可负,如 -10" />
+                          </label>
+                          <label v-if="editingVarOp?.op === 'set' || editingVarOp?.op === 'assign'" class="bbs-fp-nrow">
+                            <span class="bbs-fp-nlabel">值</span>
+                            <textarea v-model="edit.varValue" rows="1" class="bbs-input bbs-fp-nfield" placeholder="文本直接写;数字/true/JSON 按原样" @input="onTextInput" @keydown="onFieldKeydown"></textarea>
+                          </label>
+                        </template>
                         <template v-else-if="tag.editable && tag.bucket === 'remove'">
                           <label class="bbs-fp-nrow">
                             <span class="bbs-fp-nlabel">名称</span>
                             <textarea :ref="setFocus" v-model="edit.name" rows="1" class="bbs-input bbs-fp-nfield" placeholder="名称" @input="onTextInput" @keydown="onFieldKeydown"></textarea>
                           </label>
                         </template>
-                        <!-- 不可编辑标签:只读回显要删除的内容 -->
-                        <p v-else class="bbs-fp-editreadonly">{{ tag.text }}</p>
+                        <!-- 不可编辑标签:只读回显要删除的内容(带副文本,如变量的值/增量) -->
+                        <p v-else class="bbs-fp-editreadonly">{{ tag.sub ? `${tag.text} · ${tag.sub}` : tag.text }}</p>
                         <div class="bbs-fp-editfoot">
                           <button class="bbs-fp-editdel" type="button" title="删除此条" @click="deleteTag(tag)"><Icon name="trash" />删除</button>
                           <span class="bbs-fp-editfoot-spacer"></span>

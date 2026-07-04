@@ -5,11 +5,11 @@ import type { TaskType } from '@/api/settings';
 import type { STMessage, WorldInfoEntry } from '@/st/context';
 import { getContext, getCheckWorldInfo } from '@/st/context';
 import { toast } from '@/st/toast';
-import { addSummary, deriveMemory, finalizeDelta, getLeaf, itemChangesOf, leafValid, makeLeafId, pruneBrokenComps, syncItemLogFromMessage } from './apply';
+import { addSummary, deriveMemory, finalizeDelta, fmtVarOpsInline, getLeaf, itemChangesOf, leafValid, makeLeafId, pruneBrokenComps, syncItemLogFromMessage } from './apply';
 import { extractJsonObject } from './json';
 import { clearInjection, refreshInjection, renderHistoryNodes, selectHistoryNodesBefore } from './inject';
 import { buildBatchSummaryPrompt, buildBatchThinking, buildCharCardSystem, buildPersonaSystem, buildResummaryPrompt, buildSummaryPrompt, buildWorldInfoSystem, fmtItemLogInline, JAILBREAK_PROMPT, selectRecentResolvedPlans, THINKING_CHECKLIST, THINKING_PREFILL } from './prompts';
-import { clampToTimeTags, cleanBody, parseTimeRange, syncTimeTagRegex, writeItemLogTag } from './timeTag';
+import { clampToTimeTags, cleanBody, parseTimeRange, syncTimeTagRegex, writeItemLogTag, writeVarLogTag } from './timeTag';
 import { memory, recomputeDerived, scheduleLeafFlush } from './store';
 import type { LeafExtra, SummaryDelta } from './types';
 import { scheduleVectorIndex } from './vector';
@@ -789,6 +789,9 @@ function applyLeafForFloor(
   // 用 stateBefore.items(本楼之前的物品)作基准算 from→to;无变动则只清旧块。
   const changes = itemChangesOf(storedDelta, stateBefore.items, timeEnd || timeStart || '');
   chat[aiFloor].mes = writeItemLogTag(chat[aiFloor].mes, fmtItemLogInline(changes));
+  // 自定义变量净变动同样写进正文 <bbs_vars>(紧随物品块,正则隐藏、不进副API摘要),
+  // 让窗口内全文楼层的主模型看到「本楼已改过这些变量」,防重复改(与物品旁注同机制)。
+  chat[aiFloor].mes = writeVarLogTag(chat[aiFloor].mes, fmtVarOpsInline(storedDelta.varOps));
 }
 
 /**
@@ -837,6 +840,10 @@ async function summarizeFloorWork(
     history,
     content,
     hasTimeTags,
+    // 自定义变量:当前状态取本楼之前(不泄漏未来);含义+规则各合并三层(副API两段都要)
+    varsState: stateBefore.vars,
+    varsMeaning: (['global', 'char', 'chat'] as const).map(t => memory.varTemplates[t].meaning.trim()).filter(Boolean).join('\n\n'),
+    varsRule: (['global', 'char', 'chat'] as const).map(t => memory.varTemplates[t].rule.trim()).filter(Boolean).join('\n\n'),
   });
 
   const messages: ChatMsg[] = [];

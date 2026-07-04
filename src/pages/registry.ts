@@ -4,6 +4,7 @@ import Npcs from './npcs/index.vue';
 import Scenes from './scenes/index.vue';
 import Settings from './settings/index.vue';
 import Summary from './summary/index.vue';
+import Vars from './vars/index.vue';
 
 export interface PageDef {
   /** 唯一 id,存进 ui.activePage / localStorage;同时作为 Icon 的 name */
@@ -24,6 +25,7 @@ export const PAGES: PageDef[] = [
   { id: 'items', label: '物品', component: Items },
   { id: 'scenes', label: '场景', component: Scenes },
   { id: 'npcs', label: '角色', component: Npcs },
+  { id: 'vars', label: '变量', component: Vars },
   { id: 'settings', label: '设置', component: Settings },
 ];
 

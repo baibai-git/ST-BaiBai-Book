@@ -14,7 +14,7 @@ import { apiSettings, engineActiveHere } from '@/api/settings';
 import type { STMessage } from '@/st/context';
 import { getContext } from '@/st/context';
 import { classifyNpcPresence, findCurrentSceneId, getLeaf, leafValid } from './apply';
-import { fmtItems, fmtPlans, fmtResolvedPlans, selectRecentResolvedPlans, MEMORY_BRIEFING_NOTE, MEMORY_BRIEFING_END } from './prompts';
+import { fmtItems, fmtPlans, fmtResolvedPlans, renderVarsState, selectRecentResolvedPlans, MEMORY_BRIEFING_NOTE, MEMORY_BRIEFING_END } from './prompts';
 import { memory } from './store';
 import { compactTimeLabel, formatRange, latestStoryTime, splitTimeLabel, timeTagPrompt } from './timeTag';
 import { relativeTimeLabel, weekdayLabel } from './timeRel';
@@ -448,9 +448,23 @@ export function buildStateInjectionText(): string {
   const recentResolved = selectRecentResolvedPlans(memory.plans, apiSettings.recentResolvedPlansCount);
   if (recentResolved.length) st.push(`近期已完成(已了结,勿当未完成再推进/重复记录):\n${fmtResolvedPlans(recentResolved)}`);
 
+  // 自定义变量:发当前状态 + 各字段「含义」给主模型(帮它理解并保持数值/设定连贯),明确框定为只读。
+  // ⚠️ 绝不注入「变化规则」(rule)——那是给副API摘要用的「如何增删改」指令(含 set/assign 命令语法);
+  //    主模型看到「何时怎么变」会误以为该在正文里输出/复述变量或命令。含义只描述「是什么」,给主模型安全。
+  const varMeaning = (['global', 'char', 'chat'] as const)
+    .map(t => memory.varTemplates[t].meaning.trim())
+    .filter(Boolean)
+    .join('\n\n');
+  const hasVarState = Object.keys(memory.vars).length > 0;
+  if (hasVarState) {
+    let block = `自定义变量(当前状态,只读参考——严禁在正文里复述、罗列或输出这些变量/命令):\n${renderVarsState(memory.vars)}`;
+    if (varMeaning) block += `\n变量含义(仅帮你理解上面的值,不要输出):\n${varMeaning}`;
+    st.push(block);
+  }
+
   // 状态块在有任何有意义内容时才注入(物品/计划即使空也会有「(无)」占位,
   // 但只要存在摘要或时间/地点就值得带上整块)
-  const hasState = memory.state.time || memory.state.location || memory.items.length || memory.scenes.length || memory.npcs.length || openPlans.length;
+  const hasState = memory.state.time || memory.state.location || memory.items.length || memory.scenes.length || memory.npcs.length || openPlans.length || hasVarState;
   if (!hasState) return '';
   // 首尾私密简报框定,避免主模型把状态快照当成要复述/输出的模板(正文后跟吐一份状态)
   return `${MEMORY_BRIEFING_NOTE}\n[当前状态]\n${st.join('\n')}\n${MEMORY_BRIEFING_END}`;

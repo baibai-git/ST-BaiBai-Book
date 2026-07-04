@@ -1,9 +1,9 @@
 import { getContext, type STMessage } from '@/st/context';
 import { fmtItemLogInline } from './prompts';
 import { memory, recomputeDerived, saveMemory, scheduleLeafFlush } from './store';
-import { readItemsTagText, writeItemLogTag } from './timeTag';
+import { readItemsTagText, writeItemLogTag, writeVarLogTag } from './timeTag';
 import { createEmptyMemory } from './types';
-import type { BaibaiMemory, ItemDelta, ItemLogEntry, LeafExtra, MemNpc, MemPlan, MemScene, MemSummary, NpcDelta, SceneDelta, SceneReparent, StoredDelta, SummaryDelta } from './types';
+import type { BaibaiMemory, ItemDelta, ItemLogEntry, JsonValue, LeafExtra, MemNpc, MemPlan, MemScene, MemSummary, NpcDelta, SceneDelta, SceneReparent, StoredDelta, SummaryDelta, VarOp, VarTemplate, VarTier } from './types';
 
 let idSeq = 0;
 /** 生成稳定唯一 id(不依赖 random;时间走 nowMs 便于测试注入) */
@@ -362,6 +362,220 @@ function reparentScenePath(mem: BaibaiMemory, r: SceneReparent, t: number): void
   }
 }
 
+/* ============ 自定义变量:JSON 树 + 路径命令(仿 MVU) ============ */
+
+function isPlainObj(v: unknown): v is Record<string, JsonValue> {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+/** 深拷 JSON 值(避免多处共享引用被就地改)。 */
+export function deepCloneJson<T extends JsonValue>(v: T): T {
+  if (Array.isArray(v)) return v.map(x => deepCloneJson(x)) as T;
+  if (isPlainObj(v)) {
+    const o: Record<string, JsonValue> = {};
+    for (const k of Object.keys(v)) o[k] = deepCloneJson(v[k]);
+    return o as T;
+  }
+  return v;
+}
+
+/** 深合并:b 覆盖 a(仅对象递归;数组/标量整体取 b)。 */
+function deepMerge(a: Record<string, JsonValue>, b: Record<string, JsonValue>): Record<string, JsonValue> {
+  const out = deepCloneJson(a);
+  for (const k of Object.keys(b)) {
+    const bv = b[k];
+    if (isPlainObj(bv) && isPlainObj(out[k])) out[k] = deepMerge(out[k] as Record<string, JsonValue>, bv);
+    else out[k] = deepCloneJson(bv);
+  }
+  return out;
+}
+
+/** 合并三层模板成初始状态:global < char < chat(精确层覆盖)。 */
+export function mergeTemplates(t: Record<VarTier, VarTemplate>): Record<string, JsonValue> {
+  return deepMerge(deepMerge(deepCloneJson(t.global.json), t.char.json), t.chat.json);
+}
+
+/** 解析路径成段:"势力.魔法议会[0].声望" → ['势力','魔法议会',0,'声望'];''→[]。 */
+function parsePath(path: string): (string | number)[] {
+  const segs: (string | number)[] = [];
+  for (const part of String(path ?? '').split('.')) {
+    if (part === '') continue;
+    const m = part.match(/^([^[\]]*)((?:\[\d+\])*)$/);
+    if (!m) { segs.push(part); continue; }
+    if (m[1]) segs.push(m[1]);
+    const idxs = m[2].match(/\d+/g);
+    if (idxs) for (const i of idxs) segs.push(Number(i));
+  }
+  return segs;
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function getChild(parent: any, key: string | number): any {
+  return Array.isArray(parent) ? parent[Number(key)] : parent[String(key)];
+}
+function setChild(parent: any, key: string | number, value: JsonValue): void {
+  if (Array.isArray(parent)) parent[Number(key)] = value;
+  else parent[String(key)] = value;
+}
+function removeChild(parent: any, key: string | number): void {
+  if (Array.isArray(parent)) parent.splice(Number(key), 1);
+  else delete parent[String(key)];
+}
+
+/** 定位 path 的父容器与末段键;create=true 自动创建缺失中间层(下一段是数字→数组,否则对象)。 */
+function locate(root: Record<string, JsonValue>, segs: (string | number)[], create: boolean): { parent: any; last: string | number } | null {
+  let cur: any = root;
+  for (let i = 0; i < segs.length - 1; i++) {
+    const s = segs[i];
+    if (cur == null || typeof cur !== 'object') return null;
+    if (getChild(cur, s) === undefined || getChild(cur, s) === null) {
+      if (!create) return null;
+      setChild(cur, s, typeof segs[i + 1] === 'number' ? [] : {});
+    }
+    cur = getChild(cur, s);
+  }
+  if (cur == null || typeof cur !== 'object') return null;
+  return { parent: cur, last: segs[segs.length - 1] };
+}
+
+/** 施加一条路径命令到 JSON 根(就地改)。坏命令由调用方 try/catch 兜住。 */
+function applyVarOp(root: Record<string, JsonValue>, op: VarOp): void {
+  const segs = parsePath(op.path);
+
+  // 根(path=''):set 用 value 整体替换根内容;assign/remove 按 key 操作根对象
+  if (segs.length === 0) {
+    if (op.op === 'set' && isPlainObj(op.value)) {
+      for (const k of Object.keys(root)) delete root[k];
+      Object.assign(root, deepCloneJson(op.value));
+    } else if (op.op === 'assign' && op.key !== undefined) {
+      root[String(op.key)] = deepCloneJson(op.value ?? null);
+    } else if (op.op === 'remove' && op.key !== undefined) {
+      delete root[String(op.key)];
+    }
+    return;
+  }
+
+  const create = op.op === 'set' || op.op === 'assign' || op.op === 'add';
+  const loc = locate(root, segs, create);
+  if (!loc) return;
+  const { parent, last } = loc;
+
+  switch (op.op) {
+    case 'set':
+      setChild(parent, last, deepCloneJson(op.value ?? null));
+      break;
+    case 'add': {
+      const cur = getChild(parent, last);
+      const d = typeof op.delta === 'number' ? op.delta : 0;
+      setChild(parent, last, (typeof cur === 'number' ? cur : 0) + d);
+      break;
+    }
+    case 'assign': {
+      let container = getChild(parent, last);
+      if (op.key !== undefined) {
+        if (container == null || typeof container !== 'object') { container = typeof op.key === 'number' ? [] : {}; setChild(parent, last, container); }
+        setChild(container, op.key, deepCloneJson(op.value ?? null));
+      } else {
+        if (!Array.isArray(container)) { container = []; setChild(parent, last, container); }
+        (container as JsonValue[]).push(deepCloneJson(op.value ?? null));
+      }
+      break;
+    }
+    case 'remove': {
+      const container = getChild(parent, last);
+      if (op.key === undefined) {
+        removeChild(parent, last); // 删 path 本身
+      } else if (Array.isArray(container)) {
+        if (typeof op.key === 'number') container.splice(op.key, 1);
+        else { const i = container.findIndex(x => x === op.key); if (i >= 0) container.splice(i, 1); }
+      } else if (isPlainObj(container)) {
+        delete container[String(op.key)];
+      }
+      break;
+    }
+  }
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+/** 依序施加一批命令;单条坏命令跳过不致命。 */
+export function applyVarOps(root: Record<string, JsonValue>, ops: VarOp[] | undefined): void {
+  if (!ops?.length) return;
+  for (const op of ops) {
+    try { applyVarOp(root, op); } catch { /* 坏命令跳过 */ }
+  }
+}
+
+/** 变量值 → 紧凑单行串(对象/数组 JSON 化;折叠换行;超长截断)。供旁注/面板展示。 */
+function fmtVarValue(v: JsonValue | undefined): string {
+  if (v === undefined) return '';
+  let s: string;
+  if (typeof v === 'string') s = v;
+  else { try { s = JSON.stringify(v); } catch { s = String(v); } }
+  s = s.replace(/\s*[\r\n]+\s*/g, ' ').trim();
+  return s.length > 80 ? `${s.slice(0, 77)}…` : s;
+}
+
+/**
+ * 把一条变量命令描述成可读的「主文本 + 副文本」——楼层正文旁注与楼内面板**共用同一来源**,
+ * 保证两处措辞一致。主文本=被改的路径(assign/remove 带 key 时拼到尾),副文本=值/增量。
+ */
+export function describeVarOp(op: VarOp): { text: string; sub?: string } {
+  const path = op.path || '(根)';
+  switch (op.op) {
+    case 'set':
+      return { text: path, sub: `设为 ${fmtVarValue(op.value)}` };
+    case 'add': {
+      const d = typeof op.delta === 'number' ? op.delta : 0;
+      return { text: path, sub: `${d >= 0 ? '+' : ''}${d}` };
+    }
+    case 'assign': {
+      const key = op.key !== undefined ? String(op.key) : '';
+      const full = key ? (op.path ? `${op.path}.${key}` : key) : `${path}[追加]`;
+      return { text: full, sub: `= ${fmtVarValue(op.value)}` };
+    }
+    case 'remove': {
+      const key = op.key !== undefined ? String(op.key) : '';
+      return { text: key ? (op.path ? `${op.path}.${key}` : key) : path };
+    }
+    default:
+      return { text: path };
+  }
+}
+
+/**
+ * 把本楼变量命令渲染成 <bbs_vars> 旁注的多行文本(每行一条,带动词前缀)。
+ * 与 fmtItemLogInline 同角色:让窗口内全文楼层的主模型看到「本楼已改过这些变量」,防重复改。
+ * 空则返回空串(调用方据此不写块)。
+ */
+export function fmtVarOpsInline(ops: VarOp[] | undefined): string {
+  if (!ops?.length) return '';
+  const verb: Record<VarOp['op'], string> = { set: '设定', add: '变更', assign: '新增', remove: '删除' };
+  return ops
+    .map(op => {
+      const { text, sub } = describeVarOp(op);
+      return sub ? `${verb[op.op]} ${text} ${sub}` : `${verb[op.op]} ${text}`;
+    })
+    .join('\n');
+}
+
+/** 校验 AI 返回的命令数组 → 干净的 VarOp[](丢弃非法 op)。 */
+export function finalizeVarOps(raw: unknown): VarOp[] {
+  if (!Array.isArray(raw)) return [];
+  const out: VarOp[] = [];
+  for (const r of raw) {
+    if (!r || typeof r !== 'object') continue;
+    const o = r as Record<string, unknown>;
+    const op = o.op;
+    if (op !== 'set' && op !== 'assign' && op !== 'remove' && op !== 'add') continue;
+    const vo: VarOp = { op, path: typeof o.path === 'string' ? o.path : '' };
+    if (typeof o.key === 'string' || typeof o.key === 'number') vo.key = o.key;
+    if ('value' in o) vo.value = o.value as JsonValue;
+    if (op === 'add') vo.delta = Number(o.delta) || 0;
+    out.push(vo);
+  }
+  return out;
+}
+
 function applyStoredDeltaTo(mem: BaibaiMemory, d: StoredDelta, leaf: { id: string; createdAt: number; time: string }): void {
   const t = leaf.createdAt;
   const logTime = leaf.time;
@@ -538,6 +752,9 @@ function applyStoredDeltaTo(mem: BaibaiMemory, d: StoredDelta, leaf: { id: strin
       if (idx >= 0) mem.plans.splice(idx, 1);
     }
   }
+
+  // 自定义变量:按顺序把本楼路径命令施加到 JSON 状态
+  if (d.varOps?.length) applyVarOps(mem.vars, d.varOps);
 }
 
 /**
@@ -549,9 +766,10 @@ function applyStoredDeltaTo(mem: BaibaiMemory, d: StoredDelta, leaf: { id: strin
 export function deriveMemory(
   chat: STMessage[] | null,
   upToExclusive?: number,
-): Pick<BaibaiMemory, 'state' | 'items' | 'plans' | 'scenes' | 'npcs' | 'itemLog'> {
+): Pick<BaibaiMemory, 'state' | 'items' | 'plans' | 'scenes' | 'npcs' | 'itemLog' | 'vars'> {
   const mem = createEmptyMemory();
-  if (!chat) return { state: mem.state, items: mem.items, plans: mem.plans, scenes: mem.scenes, npcs: mem.npcs, itemLog: mem.itemLog };
+  mem.vars = mergeTemplates(memory.varTemplates); // 变量从三层合并模板起算(无 chat 也返回初始状态)
+  if (!chat) return { state: mem.state, items: mem.items, plans: mem.plans, scenes: mem.scenes, npcs: mem.npcs, itemLog: mem.itemLog, vars: mem.vars };
   const end = typeof upToExclusive === 'number' ? Math.min(upToExclusive, chat.length) : chat.length;
   for (let i = 0; i < end; i++) {
     if (chat[i]?.extra?.bbs_omit) continue; // 番外楼:不参与派生重放
@@ -563,7 +781,7 @@ export function deriveMemory(
   }
   // 只留最近若干条变动(注入/喂模型够用即可,省 token)
   if (mem.itemLog.length > ITEM_LOG_KEEP) mem.itemLog = mem.itemLog.slice(-ITEM_LOG_KEEP);
-  return { state: mem.state, items: mem.items, plans: mem.plans, scenes: mem.scenes, npcs: mem.npcs, itemLog: mem.itemLog };
+  return { state: mem.state, items: mem.items, plans: mem.plans, scenes: mem.scenes, npcs: mem.npcs, itemLog: mem.itemLog, vars: mem.vars };
 }
 
 /** 变动日志保留的最近条数(注入与喂摘要共用)。 */
@@ -775,6 +993,11 @@ export function finalizeDelta(delta: SummaryDelta, openPlansOrdered: { id: strin
     }
     if (Object.keys(plans).length) out.plans = plans;
   }
+
+  if (delta.vars?.length) {
+    const ops = finalizeVarOps(delta.vars);
+    if (ops.length) out.varOps = ops;
+  }
   return out;
 }
 
@@ -891,6 +1114,10 @@ export function appendOpToLatestLeaf(op: StoredDelta): boolean {
       (dp.remove ??= []).push(id);
     }
   }
+  if (op.varOps?.length) {
+    // 追加本次命令到最新叶子(按顺序,后施加者覆盖前者)
+    (d.varOps ??= []).push(...op.varOps);
+  }
 
   // 重设 extra 引用以确保持久化带上改动
   const chat = getContext()!.chat;
@@ -900,6 +1127,15 @@ export function appendOpToLatestLeaf(op: StoredDelta): boolean {
   pruneBrokenComps();
   scheduleLeafFlush();
   return true;
+}
+
+/**
+ * 手动把整棵变量状态设为 newJson(派生数据,写回最新叶子的一条根 set 命令)。
+ * 供变量页「编辑当前值(JSON)」用:用户直接编辑整份 JSON,存成 set('', newJson)。
+ * 无有效叶子返回 false。
+ */
+export function setVarsRoot(newJson: Record<string, JsonValue>): boolean {
+  return appendOpToLatestLeaf({ varOps: [{ op: 'set', path: '', value: newJson }] });
 }
 
 /**
@@ -1164,9 +1400,24 @@ export function editLeafFull(
   else delete delta.time;
   leaf.delta = delta;
   chat[index].extra = { ...(chat[index].extra ?? {}), bbs_leaf: leaf };
+  // 编辑改了 delta → 同步重写该楼正文的 <bbs_items>/<bbs_vars> 旁注(否则旁注停留在上次摘要的旧值),
+  // 与 applyLeafForFloor 落叶时同口径:物品净变动以「本楼之前状态」为基准算 from→to,变量直接渲染命令。
+  rewriteFloorTags(chat, index, delta);
   recomputeDerived();
   scheduleLeafFlush();
   return true;
+}
+
+/**
+ * 用叶子当前 delta 重写该楼正文的 <bbs_items>/<bbs_vars> 旁注(供楼内编辑后同步正文)。
+ * 基准物品状态 = 本楼之前(deriveMemory 到 index,不含本楼),与摘要落叶时一致。
+ */
+function rewriteFloorTags(chat: STMessage[], index: number, delta: StoredDelta): void {
+  const leaf = getLeaf(chat[index]);
+  const time = leaf?.timeEnd?.trim() || leaf?.timeStart?.trim() || '';
+  const priorItems = deriveMemory(chat, index).items;
+  chat[index].mes = writeItemLogTag(chat[index].mes, fmtItemLogInline(itemChangesOf(delta, priorItems, time)));
+  chat[index].mes = writeVarLogTag(chat[index].mes, fmtVarOpsInline(delta.varOps));
 }
 
 /**
