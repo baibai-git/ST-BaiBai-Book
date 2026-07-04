@@ -67,7 +67,8 @@ function saveState() {
 }
 
 /* ============ 初始模板与说明(三层) ============ */
-const editorTier = ref<VarTier>('chat');
+const defaultEditorTier = (): VarTier => (charAvailable.value ? 'char' : 'chat');
+const editorTier = ref<VarTier>(defaultEditorTier());
 const editorMode = ref<'tree' | 'source'>('tree'); // 结构编辑器(默认)/ 源码
 const editorTree = ref<Record<string, JsonValue>>({}); // 树形模式的工作副本
 const editorJson = ref(''); // 源码模式文本
@@ -88,7 +89,7 @@ function switchTier(t: VarTier) {
   editorTier.value = t;
   loadTier(t);
 }
-loadTier('chat'); // 初始载入聊天层
+loadTier(editorTier.value); // 初始优先载入角色层;群聊/未进入时回退聊天层
 
 // 树形编辑改动 → 同步一份到源码文本(切到源码时不落后)
 watch(editorTree, v => { editorJson.value = JSON.stringify(v, null, 2); }, { deep: true });
@@ -278,7 +279,7 @@ function applyImport() {
       <textarea
         v-model="editorMeaning"
         class="bbs-input bbs-modal-textarea"
-        rows="3"
+        rows="5"
         placeholder="如:xxx好感度指的是该角色对{{user}}的好感度,角色好感度的不同,行为表现也会不同。"
       ></textarea>
     </label>
@@ -287,7 +288,7 @@ function applyImport() {
       <textarea
         v-model="editorRule"
         class="bbs-input bbs-modal-textarea"
-        rows="3"
+        rows="5"
         placeholder="如: 角色每次和{{user}}触发事件时,好感度都会变化,但每次浮动不得超过5"
       ></textarea>
     </label>
