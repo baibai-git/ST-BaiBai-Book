@@ -131,11 +131,16 @@ const HUGE_WI_CONTEXT = 1_000_000_000;
  *      (如「按好感度切换人设」的条件条目)。
  * 复刻其官方 evaluateWIEntities 的顺序(先宏后 EJS)。开关 renderWorldInfoTemplates 关闭时整体跳过。
  *
- * ⚠️ 变量取「当前」状态(prepareContext 默认)——对历史楼层摘要不是严格时点精确,但够用;
- *    含写变量(setvar 等)的 EJS 每次摘要会额外执行、污染状态,故给了开关让用户可关。
+ * 变量时点(floor):作为**截止楼层**传给 prepareContext 的第二参(导出接口签名是
+ * (context, end),end 即 msg_id)。这样 EJS 里 getvar 读到的是**那一楼的楼层级变量快照**
+ * (MVU 等按 message 级存储的框架天然对得上),而非当前最新——总结旧楼时才用当时的好感度等。
+ *   - floor 省略(降级路径拿不到楼层)→ prepareContext 默认取最新楼。
+ *   - 该楼变量若只在聊天级(单一最新)而无楼层快照 → 仍是最新值(优雅降级,不比原来差)。
+ *
+ * ⚠️ 含写变量(setvar 等)的 EJS 每次摘要会额外执行、污染状态,故给了开关让用户可关。
  * 单条失败不影响整体:退回该条上一步的文本(已展宏 / 原文),并打日志。
  */
-async function renderWorldInfoContent(content: string, entry?: WorldInfoEntry): Promise<string> {
+async function renderWorldInfoContent(content: string, entry?: WorldInfoEntry, floor?: number): Promise<string> {
   if (!apiSettings.renderWorldInfoTemplates) return content;
   const ctx = getContext();
   // ① 展宏(substituteParams 不存在时保持原文)
@@ -145,7 +150,8 @@ async function renderWorldInfoContent(content: string, entry?: WorldInfoEntry): 
   const ejs = getEjsTemplate();
   if (!ejs) return text; // 未装 ST-Prompt-Template:只做了展宏
   try {
-    const env = await ejs.prepareContext({ world_info: entry });
+    // 第二参 end=floor:让 getvar 以「截止该楼」的变量快照求值;undefined 时接口默认取最新楼
+    const env = await ejs.prepareContext({ world_info: entry }, floor);
     const out = await ejs.evalTemplate(text, env);
     if (typeof out === 'string') text = out;
   } catch (e) {
@@ -159,7 +165,7 @@ async function renderWorldInfoContent(content: string, entry?: WorldInfoEntry): 
  * 仅当 checkWorldInfo 取不到时使用——此时排除设置不生效,但至少摘要照常带世界书,不崩。
  * 蓝灯/相关条目可能落在 before、after、depth(@深度)、作者注 任一位置,全部提取。
  */
-async function fetchWorldInfoViaPrompt(scanText: string[]): Promise<string> {
+async function fetchWorldInfoViaPrompt(scanText: string[], refFloor?: number): Promise<string> {
   const fn = getContext()?.getWorldInfoPrompt;
   if (typeof fn !== 'function') return '';
   const res = await fn(scanText, HUGE_WI_CONTEXT, true);
@@ -172,8 +178,8 @@ async function fetchWorldInfoViaPrompt(scanText: string[]): Promise<string> {
   }
   for (const e of res.anBefore ?? []) if (typeof e === 'string') chunks.push(e);
   for (const e of res.anAfter ?? []) if (typeof e === 'string') chunks.push(e);
-  // 逐块渲染(展宏 + EJS);此路径拿不到条目对象,EJS 仅带当前状态上下文(无 world_info)
-  const rendered = await Promise.all(chunks.map(c => renderWorldInfoContent(c)));
+  // 逐块渲染(展宏 + EJS);此路径拿不到条目对象,EJS 仅带当前状态上下文(无 world_info),但仍按 refFloor 取变量
+  const rendered = await Promise.all(chunks.map(c => renderWorldInfoContent(c, undefined, refFloor)));
   return joinWorldInfoChunks(rendered);
 }
 
@@ -187,20 +193,23 @@ async function fetchWorldInfoViaPrompt(scanText: string[]): Promise<string> {
 async function fetchWorldInfo(chat: STMessage[], targets: number[], name1: string, name2: string): Promise<string> {
   const scanText = buildScanText(chat, targets, name1, name2);
   if (!scanText.length) return '';
+  // 变量时点代表楼:取本批**最后一个 target 楼**(= 这段剧情结束时的状态,与「总结这段发生了什么」最匹配)。
+  // targets 为升序 chat 索引;空则 undefined(降级取最新)。EJS 里 getvar 据此读该楼的历史变量快照。
+  const refFloor = targets.length ? targets[targets.length - 1] : undefined;
   try {
     const check = await getCheckWorldInfo();
-    if (!check) return await fetchWorldInfoViaPrompt(scanText); // 降级:拿不到条目对象,无从过滤
+    if (!check) return await fetchWorldInfoViaPrompt(scanText, refFloor); // 降级:拿不到条目对象,无从过滤
 
     const res = await check(scanText, HUGE_WI_CONTEXT, true);
     const activated = res?.allActivatedEntries;
     if (!activated) return '';
     // allActivatedEntries 可能是 Set<entry> 或 Map<key,entry>,统一取 values
     const entries = activated instanceof Map ? [...activated.values()] : [...activated];
-    // 逐条渲染(展宏 + 执行 EJS),让「按好感度切换人设」等动态条目拿到成品而非原文
+    // 逐条渲染(展宏 + 执行 EJS),让「按好感度切换人设」等动态条目拿到成品而非原文;变量按 refFloor 取历史值
     const chunks = await Promise.all(
       entries
         .filter(e => e && !isWorldInfoEntryExcluded(e))
-        .map(e => renderWorldInfoContent(typeof e.content === 'string' ? e.content : '', e)),
+        .map(e => renderWorldInfoContent(typeof e.content === 'string' ? e.content : '', e, refFloor)),
     );
     return joinWorldInfoChunks(chunks);
   } catch (e) {
