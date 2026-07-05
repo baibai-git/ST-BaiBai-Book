@@ -16,7 +16,7 @@ export interface ChatMsg {
   content: string;
 }
 
-export class ApiError extends Error {}
+export class ApiError extends Error { }
 
 /** 规范化 base url:确保以 /v1 结尾(多数 OpenAI 兼容服务需要) */
 function normalizeUrl(url: string): string {
@@ -61,7 +61,7 @@ export async function requestCompletion(
     model: channel.model,
     messages: outMessages,
     temperature: channel.temperature ?? 1.0,
-    max_tokens: channel.maxTokens ?? 8192,
+    max_tokens: channel.maxTokens ?? 65535,
     stream,
     // 静默:不影响主对话状态
     presence_penalty: 0,
@@ -119,7 +119,7 @@ async function readSseContent(resp: Response): Promise<string> {
   const decoder = new TextDecoder();
   let buf = '';
   let out = '';
-  for (;;) {
+  for (; ;) {
     const { done, value } = await reader.read();
     if (done) break;
     buf += decoder.decode(value, { stream: true });
@@ -158,7 +158,7 @@ function extractContent(data: any): string {
 /* ============ 跟随主 API(主界面当前在用的 API 设置) ============ */
 
 /** 摘要/总结跟随主 API 时的响应上限:够装下思维链 + JSON,避免被主 API 默认 max tokens 截断。 */
-const MAIN_API_RESPONSE_LENGTH = 8192;
+const MAIN_API_RESPONSE_LENGTH = 65535;
 
 /**
  * 是否具备「跟随主 API」的条件:ST 暴露了 generateRaw(稳定 API)即可。

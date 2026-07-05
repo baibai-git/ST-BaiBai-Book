@@ -359,13 +359,13 @@ function normalize(raw: unknown): ApiSettings {
   // 去空、去重,缺失/非数组回退空数组。
   merged.customStripTags = Array.isArray(merged.customStripTags)
     ? Array.from(
-        new Set(
-          merged.customStripTags
-            .filter((x): x is string => typeof x === 'string')
-            .map(sanitizeTagName)
-            .filter(Boolean),
-        ),
-      )
+      new Set(
+        merged.customStripTags
+          .filter((x): x is string => typeof x === 'string')
+          .map(sanitizeTagName)
+          .filter(Boolean),
+      ),
+    )
     : [];
   // 变量模板:全局深规整;角色按 avatar 键逐份规整(丢弃空模板的键,保持存储干净)
   merged.varsGlobalTemplate = normalizeTemplate((raw as Partial<ApiSettings>).varsGlobalTemplate);
@@ -427,7 +427,7 @@ function normalizeChannel(c: Partial<ApiChannel>): ApiChannel {
     key: typeof c.key === 'string' ? c.key : '',
     model: typeof c.model === 'string' ? c.model : '',
     temperature: typeof c.temperature === 'number' ? c.temperature : 1.0,
-    maxTokens: typeof c.maxTokens === 'number' ? c.maxTokens : 8192,
+    maxTokens: typeof c.maxTokens === 'number' ? c.maxTokens : 65535,
     stream: typeof c.stream === 'boolean' ? c.stream : false,
     prefill: typeof c.prefill === 'boolean' ? c.prefill : true, // 后加字段:老数据默认开(保持原行为)
     excludeParams: Array.isArray(c.excludeParams)
@@ -570,7 +570,7 @@ export function newChannel(): ApiChannel {
     key: '',
     model: '',
     temperature: 1.0,
-    maxTokens: 8192,
+    maxTokens: 65535,
     stream: false,
     prefill: true,
     excludeParams: [],
