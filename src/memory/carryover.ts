@@ -117,6 +117,7 @@ function encodeStateAsDelta(state: ReturnType<typeof deriveMemory>): StoredDelta
     delta.npcs = {
       add: state.npcs.map(n => ({
         name: n.name,
+        gender: n.gender,
         title: n.title,
         desc: n.desc,
         personality: n.personality,

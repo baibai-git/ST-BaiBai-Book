@@ -329,11 +329,11 @@ function npcStateTail(n: MemNpc, withPlace: boolean): string {
 /**
  * 渲染 NPC 名册注入块(分四档省 token):
  *  - **主要角色**(important):永远全量置顶,**突出即时状态面板**(着装/状态/所在),身份/性格/外貌从简。
- *  - 在场(随行 / 所在地=主角当前节点)→ 全量:名 + 身份 + 性格 + 外貌 + 即时状态。
- *  - **同区域**(抬头最多一级就与主角共处)→ 轻量:名 + 身份 + 性格 + 所在地。留个性格,免得 AI
+ *  - 在场(随行 / 所在地=主角当前节点)→ 全量:名 + 性别 + 身份 + 性格 + 外貌 + 即时状态。
+ *  - **同区域**(抬头最多一级就与主角共处)→ 轻量:名 + 性别 + 身份 + 性格 + 所在地。留个性格,免得 AI
  *    临时拉其出场时凭空 OOC;但砍掉外貌/即时状态这俩大头,人多时省得多。
- *  - 不在场(更上级祖先/更远旁支)→ 只发 名 + 身份(title)。
- * 无 NPC 返回空串。
+ *  - 不在场(更上级祖先/更远旁支)→ 只发 名 + 性别 + 身份(title)。
+ * **性别在所有档都发**(包括不在场),防 AI 搞错性别。无 NPC 返回空串。
  */
 function fmtNpcContext(npcs: MemNpc[], scenes: MemScene[], here: string, locationPath?: string[]): string {
   if (!npcs.length) return '';
@@ -354,7 +354,9 @@ function fmtNpcContext(npcs: MemNpc[], scenes: MemScene[], here: string, locatio
     // 主要角色:状态面板优先。身份留一句帮定位,外貌/性格从简(卡里通常已有),重点是即时状态。
     const detailed = main
       .map(n => {
-        const head = oneLine(n.title) ? `${n.name}(${oneLine(n.title)})` : n.name;
+        const gender = oneLine(n.gender) ? `·${oneLine(n.gender)}` : '';
+        const title = oneLine(n.title) ? `·${oneLine(n.title)}` : '';
+        const head = gender || title ? `${n.name}(${[gender, title].filter(Boolean).join('')})` : n.name;
         return `  - ${head}${npcStateTail(n, true)}`;
       })
       .join('\n');
@@ -364,7 +366,10 @@ function fmtNpcContext(npcs: MemNpc[], scenes: MemScene[], here: string, locatio
     const detailed = present
       .map(n => {
         const parts = [n.name];
-        if (oneLine(n.title)) parts.push(`(${oneLine(n.title)})`);
+        const inBracket: string[] = [];
+        if (oneLine(n.gender)) inBracket.push(oneLine(n.gender));
+        if (oneLine(n.title)) inBracket.push(oneLine(n.title));
+        if (inBracket.length) parts.push(`(${inBracket.join('·')})`);
         const profile: string[] = [];
         if (oneLine(n.personality)) profile.push(`性格:${oneLine(n.personality)}`);
         if (oneLine(n.desc)) profile.push(oneLine(n.desc));
@@ -376,24 +381,30 @@ function fmtNpcContext(npcs: MemNpc[], scenes: MemScene[], here: string, locatio
     lines.push(`在场角色:\n${detailed}`);
   }
   if (nearby.length) {
-    // 同区域:名 + 身份 + 性格 + 所在地;砍掉外貌/即时状态。留性格以稳住临时出场时的人设。
+    // 同区域:名 + 性别 + 身份 + 性格 + 所在地;砍掉外貌/即时状态。留性格以稳住临时出场时的人设。
     const brief = nearby
       .map(n => {
-        const title = oneLine(n.title) ? `(${oneLine(n.title)})` : '';
+        const inBracket: string[] = [];
+        if (oneLine(n.gender)) inBracket.push(oneLine(n.gender));
+        if (oneLine(n.title)) inBracket.push(oneLine(n.title));
+        const bracket = inBracket.length ? `(${inBracket.join('·')})` : '';
         const pers = oneLine(n.personality) ? ` —— 性格:${oneLine(n.personality)}` : '';
         const place = oneLine(n.location) ? ` [在:${oneLine(n.location)}]` : '';
-        return `  - ${n.name}${title}${pers}${place}`;
+        return `  - ${n.name}${bracket}${pers}${place}`;
       })
       .join('\n');
     lines.push(`同区域角色(在附近但未必照面;需要时可让其自然登场,勿凭空改设定):\n${brief}`);
   }
   if (absent.length) {
-    // 不在场:仅名 + 身份,按所在地括注;无外貌/性格/状态
+    // 不在场:仅名 + 性别 + 身份,按所在地括注;无外貌/性格/状态
     const brief = absent
       .map(n => {
-        const title = oneLine(n.title) ? `(${oneLine(n.title)})` : '';
+        const inBracket: string[] = [];
+        if (oneLine(n.gender)) inBracket.push(oneLine(n.gender));
+        if (oneLine(n.title)) inBracket.push(oneLine(n.title));
+        const bracket = inBracket.length ? `(${inBracket.join('·')})` : '';
         const loc = oneLine(n.location);
-        return `  - ${n.name}${title}${loc ? ` [在:${loc}]` : ''}`;
+        return `  - ${n.name}${bracket}${loc ? ` [在:${loc}]` : ''}`;
       })
       .join('\n');
     lines.push(`其他已知角色(不在当前场景,仅名与身份):\n${brief}`);

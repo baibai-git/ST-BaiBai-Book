@@ -57,7 +57,7 @@ function buildStateSnapshot(chat: STMessage[], upTo: number): string {
     lines.push(`物品清单:\n${fmtItems(st.items.map(i => ({ name: i.name, qty: i.qty, desc: i.desc, carried: i.carried, location: i.location })))}`);
   }
   if (st.npcs.length) {
-    lines.push(`NPC名册:\n${fmtNpcs(st.npcs.map(n => ({ name: n.name, title: n.title, follow: n.follow, location: n.location })))}`);
+    lines.push(`NPC名册:\n${fmtNpcs(st.npcs.map(n => ({ name: n.name, gender: n.gender, title: n.title, follow: n.follow, location: n.location })))}`);
   }
   const openPlans = st.plans.filter(p => p.status === 'open');
   if (openPlans.length) {

@@ -706,8 +706,9 @@ function applyStoredDeltaTo(mem: BaibaiMemory, d: StoredDelta, leaf: { id: strin
       const id = npcId(add.name);
       const ex = mem.npcs.find(n => n.id === id);
       if (ex) {
-        // 已存在:档案层(title/desc/性格)add 视作补全(仅填空,不覆盖既有);
+        // 已存在:档案层(gender/title/desc/性格)add 视作补全(仅填空,不覆盖既有);
         // 即时层(outfit/condition/important)仍直接覆盖(它本就是当前快照),再施加位置。
+        if (add.gender && !ex.gender) ex.gender = add.gender.trim();
         if (add.title && !ex.title) ex.title = add.title.trim();
         if (add.desc && !ex.desc) ex.desc = add.desc.trim();
         if (add.personality && !ex.personality) ex.personality = add.personality.trim();
@@ -718,6 +719,7 @@ function applyStoredDeltaTo(mem: BaibaiMemory, d: StoredDelta, leaf: { id: strin
         const npc: BaibaiMemory['npcs'][number] = {
           id,
           name: add.name.trim(),
+          gender: add.gender?.trim() || undefined,
           title: add.title?.trim() || undefined,
           desc: add.desc?.trim() || undefined,
           personality: add.personality?.trim() || undefined,
@@ -733,6 +735,7 @@ function applyStoredDeltaTo(mem: BaibaiMemory, d: StoredDelta, leaf: { id: strin
       if (!upd?.name?.trim()) continue;
       const n = mem.npcs.find(x => x.id === npcId(upd.name));
       if (!n) continue; // 容错:更新不存在的 NPC 则忽略
+      if (upd.gender) n.gender = upd.gender.trim();
       if (upd.title) n.title = upd.title.trim();
       if (upd.desc) n.desc = upd.desc.trim();
       if (upd.personality) n.personality = upd.personality.trim();
@@ -997,6 +1000,7 @@ export function finalizeDelta(delta: SummaryDelta, openPlansOrdered: { id: strin
       (arr ?? [])
         .map(n => ({
           name: String(n.name ?? '').trim(),
+          gender: n.gender?.trim() || undefined,
           title: n.title?.trim() || undefined,
           desc: n.desc?.trim() || undefined,
           personality: n.personality?.trim() || undefined,
@@ -1235,6 +1239,7 @@ export function editItem(
 export function upsertNpc(
   fields: {
     name: string;
+    gender?: string;
     title?: string;
     desc?: string;
     personality?: string;
@@ -1251,6 +1256,7 @@ export function upsertNpc(
     npcs: {
       add: [{
         name,
+        gender: fields.gender?.trim() || undefined,
         title: fields.title?.trim() || undefined,
         desc: fields.desc?.trim() || undefined,
         personality: fields.personality?.trim() || undefined,
@@ -1275,6 +1281,7 @@ export function editNpc(
   oldName: string,
   patch: {
     name?: string;
+    gender?: string;
     title?: string;
     desc?: string;
     personality?: string;
@@ -1286,6 +1293,7 @@ export function editNpc(
   },
 ): boolean {
   const newName = patch.name?.trim() || oldName;
+  const gender = patch.gender?.trim() || undefined;
   const title = patch.title?.trim() || undefined;
   const desc = patch.desc?.trim() || undefined;
   const personality = patch.personality?.trim() || undefined;
@@ -1298,7 +1306,7 @@ export function editNpc(
   const condition = patch.condition !== undefined ? (patch.condition.trim() || undefined) : prev?.condition;
   const important = patch.important !== undefined ? patch.important : prev?.important;
 
-  const fields = { title, desc, personality, outfit, condition, important, follow, location };
+  const fields = { gender, title, desc, personality, outfit, condition, important, follow, location };
   if (norm(newName) !== norm(oldName)) {
     return appendOpToLatestLeaf({
       npcs: { remove: [oldName], add: [{ name: newName, ...fields }] },

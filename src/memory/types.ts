@@ -165,6 +165,8 @@ export interface MemNpc {
   id: string;
   /** 名字(同时作为匹配键) */
   name: string;
+  /** 性别(档案层;短值,如「男」「女」。不受在场判定影响,所有分档都注入,防 AI 搞错性别) */
+  gender?: string;
   /** 身份/职业一句话(不在场时唯一保留的信息) */
   title?: string;
   /** 固定外貌:发色/身材/疤痕等长期不变的体貌(档案层,高门槛,几乎不更新) */
@@ -364,6 +366,8 @@ export interface ItemDelta {
 /** NPC 指令里单个角色的形状(AI / 手动共用) */
 export interface NpcDelta {
   name: string;
+  /** 性别(档案层,短值;所有分档都注入) */
+  gender?: string;
   /** 身份/职业一句话 */
   title?: string;
   /** 固定外貌:长期不变的体貌(档案层) */

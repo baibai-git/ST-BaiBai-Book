@@ -878,7 +878,7 @@ async function summarizeFloorWork(
     items: stateBefore.items.map(i => ({ name: i.name, qty: i.qty, desc: i.desc, carried: i.carried, location: i.location })),
     itemLog: stateBefore.itemLog,
     scenes: stateBefore.scenes.map(s => ({ path: s.path, desc: s.desc })),
-    npcs: stateBefore.npcs.map(n => ({ name: n.name, title: n.title, important: n.important, outfit: n.outfit, condition: n.condition, follow: n.follow, location: n.location })),
+    npcs: stateBefore.npcs.map(n => ({ name: n.name, gender: n.gender, title: n.title, important: n.important, outfit: n.outfit, condition: n.condition, follow: n.follow, location: n.location })),
     openPlans: openPlansOrdered.map(p => ({ kind: p.kind, content: p.content, createdTime: p.createdTime, targetTime: p.targetTime })),
     // 近期已完成计划:与注入端同口径,截止点用本楼之前的状态(不泄漏未来)
     resolvedPlans: selectRecentResolvedPlans(stateBefore.plans, apiSettings.recentResolvedPlansCount),

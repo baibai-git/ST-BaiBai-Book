@@ -64,6 +64,7 @@ const composerOpen = ref(false);
 const nameInput = ref<HTMLInputElement | null>(null);
 interface NpcDraft {
   name: string;
+  gender: string;
   title: string;
   personality: string;
   desc: string;
@@ -74,7 +75,7 @@ interface NpcDraft {
   location: string;
 }
 function emptyDraft(): NpcDraft {
-  return { name: '', title: '', personality: '', desc: '', outfit: '', condition: '', important: false, follow: false, location: memory.state.location || '' };
+  return { name: '', gender: '', title: '', personality: '', desc: '', outfit: '', condition: '', important: false, follow: false, location: memory.state.location || '' };
 }
 const draft = ref<NpcDraft>(emptyDraft());
 
@@ -92,6 +93,7 @@ function addNpc() {
   if (!d.name.trim()) return;
   const ok = upsertNpc({
     name: d.name,
+    gender: d.gender,
     title: d.title,
     personality: d.personality,
     desc: d.desc,
@@ -115,6 +117,7 @@ function openEdit(npc: MemNpc) {
   editing.value = {
     oldName: npc.name,
     name: npc.name,
+    gender: npc.gender ?? '',
     title: npc.title ?? '',
     personality: npc.personality ?? '',
     desc: npc.desc ?? '',
@@ -133,6 +136,7 @@ function saveEdit() {
   if (!e || !e.name.trim()) return;
   editNpc(e.oldName, {
     name: e.name,
+    gender: e.gender,
     title: e.title,
     personality: e.personality,
     desc: e.desc,
@@ -182,6 +186,7 @@ function confirmRemove() {
             <div class="bbs-npc-body">
               <div class="bbs-npc-head">
                 <span class="bbs-npc-name">{{ n.name }}</span>
+                <span v-if="n.gender" class="bbs-npc-gender">{{ n.gender }}</span>
                 <span v-if="n.title" class="bbs-npc-flag">{{ n.title }}</span>
                 <span class="bbs-npc-acts">
                   <button class="bbs-item-act bbs-npc-star active" type="button" title="主要角色 · 点击取消" @click="toggleImportant(n)"><Icon name="star" /></button>
@@ -213,6 +218,7 @@ function confirmRemove() {
             <div class="bbs-npc-body">
               <div class="bbs-npc-head">
                 <span class="bbs-npc-name">{{ n.name }}</span>
+                <span v-if="n.gender" class="bbs-npc-gender">{{ n.gender }}</span>
                 <span v-if="n.follow" class="bbs-npc-flag is-follow"><Icon name="pin" />随行</span>
                 <span v-else-if="n.location" class="bbs-npc-flag"><Icon name="scenes" />{{ n.location }}</span>
                 <span class="bbs-npc-acts">
@@ -260,6 +266,7 @@ function confirmRemove() {
             <div class="bbs-npc-body">
               <div class="bbs-npc-head">
                 <span class="bbs-npc-name">{{ n.name }}</span>
+                <span v-if="n.gender" class="bbs-npc-gender">{{ n.gender }}</span>
                 <span v-if="n.location" class="bbs-npc-flag"><Icon name="scenes" />{{ n.location }}</span>
                 <span class="bbs-npc-acts">
                   <button
@@ -302,6 +309,7 @@ function confirmRemove() {
             <div class="bbs-npc-body">
               <div class="bbs-npc-head">
                 <span class="bbs-npc-name">{{ n.name }}</span>
+                <span v-if="n.gender" class="bbs-npc-gender">{{ n.gender }}</span>
                 <span v-if="n.location" class="bbs-npc-flag"><Icon name="scenes" />{{ n.location }}</span>
                 <span v-else class="bbs-npc-flag is-nowhere">所在不明</span>
                 <span class="bbs-npc-acts">
@@ -349,6 +357,10 @@ function confirmRemove() {
         <label class="bbs-modal-field">
           <span class="bbs-modal-label">名字</span>
           <input ref="nameInput" v-model="draft.name" class="bbs-input" type="text" placeholder="角色名" @keydown.enter="addNpc" />
+        </label>
+        <label class="bbs-modal-field">
+          <span class="bbs-modal-label">性别</span>
+          <input v-model="draft.gender" class="bbs-input" type="text" placeholder="如:男、女" @keydown.enter="addNpc" />
         </label>
         <label class="bbs-modal-field">
           <span class="bbs-modal-label">身份(职业 / 与主角的关系)</span>
@@ -399,6 +411,10 @@ function confirmRemove() {
         <label class="bbs-modal-field">
           <span class="bbs-modal-label">名字</span>
           <input v-model="editing.name" class="bbs-input" type="text" placeholder="角色名" />
+        </label>
+        <label class="bbs-modal-field">
+          <span class="bbs-modal-label">性别</span>
+          <input v-model="editing.gender" class="bbs-input" type="text" placeholder="如:男、女" />
         </label>
         <label class="bbs-modal-field">
           <span class="bbs-modal-label">身份(职业 / 与主角的关系)</span>
@@ -589,6 +605,13 @@ function confirmRemove() {
   font-size: 14px;
   font-weight: 600;
   color: var(--bbs-ink);
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+/* 性别小标签:紧凑灰色括注,跟在名字后面 */
+.bbs-npc-gender {
+  font-size: 11px;
+  color: var(--bbs-ink-muted);
   flex: 0 0 auto;
   white-space: nowrap;
 }
