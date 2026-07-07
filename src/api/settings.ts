@@ -106,6 +106,10 @@ export interface VectorSettings {
   rerank: VectorEndpoint;
   /** 查询重写端点;url 留空复用 embedding */
   queryRewrite: VectorEndpoint;
+  /** 查询重写请求是否置顶注入破限提示词(system;取自「自定义提示词 · 破限」,留空则用内置默认)。默认关。 */
+  queryRewriteJailbreak: boolean;
+  /** 查询重写单次最大输出 token(三角色里仅它生成文本;够放 INTENT + 多条 Q 即可,偏小会截断)。默认 8192。 */
+  queryRewriteMaxTokens: number;
   /** 召回参数(候选数/阈值/条数) */
   recall: VectorRecallSettings;
 }
@@ -245,6 +249,8 @@ function defaults(): ApiSettings {
       embedding: { url: 'https://api.siliconflow.cn/v1', key: '', model: 'Qwen/Qwen3-Embedding-8B', timeoutSec: 10, retries: 1 },
       rerank: { url: '', key: '', model: 'Qwen/Qwen3-Reranker-4B', timeoutSec: 20, retries: 1 },
       queryRewrite: { url: '', key: '', model: 'Qwen/Qwen3.5-27B', timeoutSec: 90, retries: 1 },
+      queryRewriteJailbreak: false,
+      queryRewriteMaxTokens: 8192,
       recall: {
         rerankCandidates: 20,
         embeddingThreshold: 0.8,
@@ -340,6 +346,14 @@ function normalize(raw: unknown): ApiSettings {
     Number.isFinite(merged.vector.recall.minAiFloors) && merged.vector.recall.minAiFloors >= 0
       ? Math.floor(merged.vector.recall.minAiFloors)
       : 0;
+  // 查询重写破限开关:布尔,缺失(老数据无此键)回退 false(默认不注入)
+  merged.vector.queryRewriteJailbreak =
+    typeof merged.vector.queryRewriteJailbreak === 'boolean' ? merged.vector.queryRewriteJailbreak : false;
+  // 查询重写最大输出 token:正整数,下限 256(太小会截断 INTENT/Q),缺失/非法回退默认 8192
+  merged.vector.queryRewriteMaxTokens =
+    Number.isFinite(merged.vector.queryRewriteMaxTokens) && merged.vector.queryRewriteMaxTokens >= 256
+      ? Math.floor(merged.vector.queryRewriteMaxTokens)
+      : 8192;
   // 副 API 渠道:逐个补全新加的字段(老数据没有 stream/excludeParams),并校验类型
   merged.channels = (Array.isArray(merged.channels) ? merged.channels : []).map(normalizeChannel);
   // 字数档位:仅两个合法值,旧数据缺失/非法回退详细(= 老用户行为不变)

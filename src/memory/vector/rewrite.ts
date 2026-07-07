@@ -15,11 +15,11 @@
 
 import type { STMessage } from '@/st/context';
 import { getContext } from '@/st/context';
-import { resolveVectorModel } from '@/api/settings';
+import { apiSettings, resolveVectorModel } from '@/api/settings';
 import { deriveMemory, getLeaf, leafValid } from '../apply';
 import { resolveKeepStart } from '../engine';
 import { renderHistoryNodes, selectHistoryNodesBefore } from '../inject';
-import { fmtItems, fmtNpcs, fmtPlans, QUERY_REWRITE_SYSTEM, QUERY_REWRITE_TAIL } from '../prompts';
+import { fmtItems, fmtNpcs, fmtPlans, JAILBREAK_PROMPT, QUERY_REWRITE_SYSTEM, QUERY_REWRITE_TAIL } from '../prompts';
 import { memory } from '../store';
 import { cleanBody } from '../timeTag';
 import { fetchWithTimeoutRetry } from './embed';
@@ -93,7 +93,14 @@ function buildMessages(chat: STMessage[]): ChatMsg[] {
 
   // 开头唯一 system:系统提示词 +(可选)历史剧情摘要,合并为一条,保证 system 只出现在开头
   const history = renderHistoryNodes(selectHistoryNodesBefore(memory.summaries, chat, windowStart));
-  const systemContent = history ? `${QUERY_REWRITE_SYSTEM}\n\n[历史剧情摘要]\n${history}` : QUERY_REWRITE_SYSTEM;
+  let systemContent = history ? `${QUERY_REWRITE_SYSTEM}\n\n[历史剧情摘要]\n${history}` : QUERY_REWRITE_SYSTEM;
+  // 启用破限:把破限提示词置顶拼进开头这条唯一 system 的最前面。
+  // 不新增一条 system,以守住「system 仅允许出现在数组最开头」的渠道约束——拼进即等于「最开头 + system 身份」。
+  // 破限文本取自「自定义提示词 · 破限」,留空则回退内置默认(与摘要/总结两端同口径,见 engine.ts)。
+  if (apiSettings.vector.queryRewriteJailbreak) {
+    const jb = apiSettings.prompts.jailbreak.trim() || JAILBREAK_PROMPT;
+    if (jb) systemContent = `${jb}\n\n${systemContent}`;
+  }
   const messages: ChatMsg[] = [{ role: 'system', content: systemContent }];
 
   // 平铺窗口对话(纯 user/assistant),记录原 msgIndex 以定位快照插入点
@@ -222,7 +229,7 @@ export async function rewriteQuery(signal?: AbortSignal): Promise<RewriteResult>
         // 国产模型(Qwen3/GLM 等)默认开思维链会先吐 <think> 推理,冲乱 INTENT/Q 行格式导致解析失败。
         temperature: 0.1,
         top_p: 0.8,
-        max_tokens: 8192,
+        max_tokens: apiSettings.vector.queryRewriteMaxTokens,
         stream: false,
         enable_thinking: false,
       }),

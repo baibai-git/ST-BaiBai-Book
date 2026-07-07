@@ -949,13 +949,7 @@ function scorePct(score: number): number {
           <input v-model="apiSettings.renderWorldInfoTemplates" type="checkbox" class="bbs-checkbox" />
         </label>
         <p class="bbs-field-hint">
-          开启后,读取世界书条目前会先展开 <code v-pre>{{宏}}</code>(酒馆助手等)并执行
-          <strong>提示词模板</strong>插件的 EJS(<code>&lt;% %&gt;</code>),让「按好感度切换人设」这类
-          动态条目拿到<strong>执行后的成品</strong>而非原文。
-          未安装提示词模板插件时仅展开宏。
-          <br />
-          ⚠️ 若某世界书条目的 EJS 里含<strong>写变量</strong>操作(如 <code>setvar</code>),每次摘要都会额外执行一次、
-          可能污染变量,遇到这种情况可关掉本项。
+          开启后会兼容提示词模板（ejs）的世界书条目
         </p>
 
         <hr class="bbs-rule" />
@@ -1166,7 +1160,8 @@ function scorePct(score: number): number {
           </label>
           <p v-if="vecModelMsg[role.key]" class="bbs-field-hint">{{ vecModelMsg[role.key] }}</p>
 
-          <!-- 超时/重试:各角色独立(默认 embedding 10s / rerank 20s / query 90s),不随地址复用回落。 -->
+          <!-- 超时/重试(+ Query 重写的最大 token):各角色独立(默认 embedding 10s / rerank 20s / query 90s),不随地址复用回落。
+               grid auto-fit:空间够就一行排开,不够自动换行。 -->
           <div class="bbs-vec-io">
             <label class="bbs-vec-io-item">
               <span class="bbs-modal-label">超时(秒)</span>
@@ -1188,7 +1183,33 @@ function scorePct(score: number): number {
                 :disabled="!apiSettings.vector.enabled"
               />
             </label>
+            <label v-if="role.key === 'queryRewrite'" class="bbs-vec-io-item">
+              <span class="bbs-modal-label">最大输出 token</span>
+              <input
+                v-model.number="apiSettings.vector.queryRewriteMaxTokens"
+                class="bbs-input bbs-num-sm"
+                type="number"
+                min="256"
+                :disabled="!apiSettings.vector.enabled"
+              />
+            </label>
           </div>
+
+          <!-- 破限:仅 Query 重写(三角色里只有它生成文本)。 -->
+          <template v-if="role.key === 'queryRewrite'">
+            <label class="bbs-switch-row">
+              <span class="bbs-field-label">启用破限</span>
+              <input
+                v-model="apiSettings.vector.queryRewriteJailbreak"
+                type="checkbox"
+                class="bbs-checkbox"
+                :disabled="!apiSettings.vector.enabled"
+              />
+            </label>
+            <p class="bbs-field-hint">
+              使用 Gemini 等模型作为重写模型时,开启这个选项,并把最大 Token 改为 65535。
+            </p>
+          </template>
           </div>
             </div>
           </div>
@@ -2191,8 +2212,11 @@ function scorePct(score: number): number {
 }
 /* 向量端点的超时/重试:两个短输入并排,label 在上、窄框在下,与上方模型行留出呼吸间距 */
 .bbs-vec-io {
-  display: flex;
-  gap: 16px;
+  display: grid;
+  /* 列宽贴合内容(而非 1fr 等分撑满),三个框紧凑靠左;auto-fit 保证空间不够时自动折行。
+     用 1fr 会把每个 item 拉满整行,item 内的 label 随之被 stretch 撑宽,看着间距很大。 */
+  grid-template-columns: repeat(auto-fit, minmax(72px, max-content));
+  gap: 14px;
   margin-top: 12px;
 }
 .bbs-vec-io-item {
@@ -2202,7 +2226,11 @@ function scorePct(score: number): number {
 }
 .bbs-num-sm {
   width: 72px;
-  text-align: right;
+  text-align: left;
+}
+/* 破限开关紧跟在超时/token 那栏之后:多留一点上间距,与上一栏拉开(只命中此处,不动通用 switch-row) */
+.bbs-vec-io + .bbs-switch-row {
+  margin-top: 6px;
 }
 /* 短选项下拉(如字数档位):贴合文字的窄宽,和右侧数字框对齐,不再撑满半行 */
 .bbs-select-narrow {
