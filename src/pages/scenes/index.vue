@@ -2,10 +2,10 @@
 import Icon from '@/components/Icon.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import ModalMask from '@/components/ModalMask.vue';
-import { editSceneDesc, findCurrentSceneId, removeScene, reparentScene, upsertScene } from '@/memory/apply';
+import { buildSceneLocationIndex, editSceneDesc, findCurrentSceneId, removeScene, reparentScene, resolveSceneLocationId, upsertScene } from '@/memory/apply';
 import { derivedMeta, memory } from '@/memory/store';
 import { getContext } from '@/st/context';
-import type { MemScene } from '@/memory/types';
+import type { MemItem, MemScene } from '@/memory/types';
 import { computed, nextTick, ref, watch } from 'vue';
 
 // 场景是从叶子摘要重放出的派生数据,手动操作写入「最新一条有效叶子」;无有效叶子时无处挂载。
@@ -99,13 +99,6 @@ watch(
   },
 );
 
-function match(a: string, b: string): boolean {
-  const x = a.trim();
-  const y = b.trim();
-  if (!x || !y) return false;
-  return x.includes(y) || y.includes(x);
-}
-
 const rows = computed<SceneRow[]>(() => {
   const byParent = new Map<string, MemScene[]>();
   for (const s of memory.scenes) {
@@ -142,12 +135,23 @@ const rows = computed<SceneRow[]>(() => {
   return out;
 });
 
-// 存放在某地点的物品(location 包含式匹配该节点名/路径任一段;只读联动展示)
+// 存放在某地点的物品:先解析到唯一 sceneId,避免子地点误挂到所有祖先/旁支。
+const sceneItems = computed(() => {
+  const index = buildSceneLocationIndex(memory.scenes);
+  const out = new Map<string, MemItem[]>();
+  for (const item of memory.items) {
+    if (item.carried !== false || !item.location) continue;
+    const sceneId = resolveSceneLocationId(memory.scenes, item.location, index);
+    if (!sceneId) continue;
+    const arr = out.get(sceneId) ?? [];
+    arr.push(item);
+    out.set(sceneId, arr);
+  }
+  return out;
+});
+
 function itemsAt(node: MemScene) {
-  return memory.items.filter(i => {
-    if (i.carried !== false || !i.location) return false;
-    return match(i.location, node.name) || node.path.some(seg => match(i.location!, seg));
-  });
+  return sceneItems.value.get(node.id) ?? [];
 }
 
 // 折叠时展示的后代地点数(整段子树,id 前缀匹配)

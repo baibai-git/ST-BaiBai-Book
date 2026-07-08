@@ -285,17 +285,125 @@ export function sceneId(path: string[]): string {
   return `scene:${normScenePath(path).map(norm).join('/')}`;
 }
 
+/** Index used to resolve item storage text against the scene tree. */
+export interface SceneLocationIndex {
+  byId: Map<string, MemScene>;
+  byParent: Map<string, MemScene[]>;
+  byName: Map<string, MemScene[]>;
+}
+
+function sceneLocationKey(s: string | undefined): string {
+  return (s ?? '').replace(/[\uFE0E\uFE0F]/g, '').trim().toLowerCase();
+}
+
+function sortLocationCandidates(arr: MemScene[]): MemScene[] {
+  return arr.sort((a, b) =>
+    sceneLocationKey(b.name).length - sceneLocationKey(a.name).length
+    || b.path.length - a.path.length
+    || a.createdAt - b.createdAt,
+  );
+}
+
+export function buildSceneLocationIndex(scenes: MemScene[]): SceneLocationIndex {
+  const byId = new Map<string, MemScene>();
+  const byParent = new Map<string, MemScene[]>();
+  const byName = new Map<string, MemScene[]>();
+
+  for (const s of scenes) {
+    byId.set(s.id, s);
+
+    const siblings = byParent.get(s.parentId) ?? [];
+    siblings.push(s);
+    byParent.set(s.parentId, siblings);
+
+    const nameKey = sceneLocationKey(s.name);
+    if (nameKey) {
+      const sameName = byName.get(nameKey) ?? [];
+      sameName.push(s);
+      byName.set(nameKey, sameName);
+    }
+  }
+
+  for (const arr of byParent.values()) sortLocationCandidates(arr);
+  for (const arr of byName.values()) sortLocationCandidates(arr);
+  return { byId, byParent, byName };
+}
+
+function sceneNameInLocation(locationKey: string, sceneName: string): boolean {
+  const nameKey = sceneLocationKey(sceneName);
+  return !!nameKey && locationKey.includes(nameKey);
+}
+
+function bestMatchedChild(children: MemScene[], locationKey: string): MemScene | null {
+  const hits = children.filter(s => sceneNameInLocation(locationKey, s.name));
+  if (!hits.length) return null;
+  const bestLen = sceneLocationKey(hits[0].name).length;
+  const tied = hits.filter(s => sceneLocationKey(s.name).length === bestLen);
+  return tied.length === 1 ? tied[0] : null;
+}
+
+/**
+ * Resolve a free-form item location into the deepest scene node it names.
+ *
+ * The walk is deliberately top-down: match a root scene name first, then only
+ * inspect that root's children, repeating until no deeper direct child matches.
+ * This avoids treating a child location as if it also belonged to every ancestor
+ * or sibling whose name appears in the full text.
+ */
+export function resolveSceneLocationId(
+  scenes: MemScene[],
+  location: string | undefined,
+  index: SceneLocationIndex = buildSceneLocationIndex(scenes),
+): string {
+  const locationKey = sceneLocationKey(location);
+  if (!locationKey || !scenes.length) return '';
+
+  let cur = bestMatchedChild(index.byParent.get('') ?? [], locationKey);
+  if (cur) {
+    for (;;) {
+      const next = bestMatchedChild(index.byParent.get(cur.id) ?? [], locationKey);
+      if (!next) break;
+      cur = next;
+    }
+    return cur.id;
+  }
+
+  const candidates: MemScene[] = [];
+  for (const list of index.byName.values()) {
+    for (const s of list) {
+      if (sceneNameInLocation(locationKey, s.name)) candidates.push(s);
+    }
+  }
+  sortLocationCandidates(candidates);
+  if (!candidates.length) return '';
+  const bestLen = sceneLocationKey(candidates[0].name).length;
+  const tied = candidates.filter(s => sceneLocationKey(s.name).length === bestLen);
+  return tied.length === 1 ? tied[0].id : '';
+}
+
+function scenePathStartsWith(path: string[], prefix: string[]): boolean {
+  return prefix.length > 0
+    && prefix.length <= path.length
+    && prefix.every((seg, i) => norm(seg) === norm(path[i]));
+}
+
+export function itemReachableAtScene(
+  scenes: MemScene[],
+  itemLoc: string | undefined,
+  current: MemScene | null,
+  here = '',
+  index: SceneLocationIndex = buildSceneLocationIndex(scenes),
+): boolean {
+  if (!current) return sceneNameReachable(itemLoc, here);
+  const itemSceneId = resolveSceneLocationId(scenes, itemLoc, index);
+  const itemScene = itemSceneId ? index.byId.get(itemSceneId) : null;
+  if (!itemScene) return false;
+  return scenePathStartsWith(current.path, itemScene.path);
+}
+
 /**
  * 当前地点 ↔ 场景树的「权威定位」:返回当前所在节点 id(找不到返回 '')。
  * 注入端与场景页**共用此函数**,杜绝两处分叉导致页面/提示词不一致。
- *
- * 定位优先级:
- *  1. locationPath(AI 给的权威路径):精确命中树里某节点 → 用它;否则按**最长存在前缀**回退
- *     (path 比树更细时,停在能确定的那一级,如 ["杭州市","滨江区某老小区","302室屋内"] 树里
- *      只到 "302室屋内" 就用它,只到上级也接受)。
- *  2. 无 locationPath / 它在树里完全落空:退回按 location 字符串的**收紧模糊匹配**——
- *     仅比「本级名」和「完整路径串」,**不再拿单个祖先段去比**(那正是「302室门口」靠祖先
- *     "杭州市" 误命中、与同深度的「302室屋内」打平后抢赢的 bug 根因)。取命中里 path 最深者。
  */
 export function findCurrentSceneId(scenes: MemScene[], here: string, locationPath?: string[]): string {
   const byId = new Map(scenes.map(s => [s.id, s]));

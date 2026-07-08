@@ -13,13 +13,13 @@
 import { apiSettings, engineActiveHere } from '@/api/settings';
 import type { STMessage } from '@/st/context';
 import { getContext } from '@/st/context';
-import { classifyNpcPresence, findCurrentSceneId, getLeaf, leafValid } from './apply';
+import { buildSceneLocationIndex, classifyNpcPresence, findCurrentSceneId, getLeaf, itemReachableAtScene, leafValid } from './apply';
 import { fmtItems, fmtPlans, fmtResolvedPlans, renderVarsState, selectRecentResolvedPlans, MEMORY_BRIEFING_NOTE, MEMORY_BRIEFING_END } from './prompts';
 import { memory } from './store';
 import { compactTimeLabel, formatRange, latestStoryTime, splitTimeLabel, timeTagPrompt } from './timeTag';
 import { relativeTimeLabel, weekdayLabel } from './timeRel';
 import { selectViewNodes, type ViewNode } from './select';
-import type { LeafExtra, MemNpc, MemScene, MemSummary } from './types';
+import type { LeafExtra, MemItem, MemNpc, MemScene, MemSummary } from './types';
 
 // 摘要页列表复用同一套选择逻辑,经此 re-export(纯算法在 select.ts,零依赖、可单测)
 export { selectViewNodes, type ViewNode };
@@ -227,17 +227,6 @@ export function buildHistoryInjectionText(): string {
 }
 
 /**
- * 物品存放地是否与当前地点匹配(可达):包含式模糊匹配,任一方包含另一方即算。
- * 兼容 AI 命名粗细不一(「客栈」⊂「城西客栈二楼」)。空地点不匹配。
- */
-function locationReachable(itemLoc: string | undefined, here: string): boolean {
-  const a = (itemLoc ?? '').trim();
-  const b = here.trim();
-  if (!a || !b) return false;
-  return a.includes(b) || b.includes(a);
-}
-
-/**
  * 在场景树里定位「当前节点」:优先 AI 给的权威 locationPath,否则按 here 收紧模糊匹配。
  * 与场景页共用 apply.findCurrentSceneId(单一来源,杜绝页面/注入分叉),这里再把 id 解析回节点。
  * 找不到返回 null(退回纯字符串行为)。
@@ -261,18 +250,6 @@ function sceneChain(scenes: MemScene[], node: MemScene | null): MemScene[] {
     cur = cur.parentId ? byId.get(cur.parentId) : undefined;
   }
   return chain;
-}
-
-/**
- * 物品是否在「当前地点或其祖先链任一级」可达。
- * 联动:当前在「归雁客栈二楼」,存放在「归雁客栈」(其祖先)的物品也算可达 → 随地点一起发。
- * chain 为空(无场景数据)时退回纯字符串 locationReachable(here),保证旧数据不回归。
- */
-function itemReachableInScene(itemLoc: string | undefined, here: string, chain: MemScene[]): boolean {
-  if (!chain.length) return locationReachable(itemLoc, here);
-  const a = (itemLoc ?? '').trim();
-  if (!a) return false;
-  return chain.some(n => locationReachable(itemLoc, n.name) || locationReachable(itemLoc, n.path.join('')));
 }
 
 /**
@@ -428,12 +405,19 @@ export function buildStateInjectionText(): string {
   const sceneBlock = fmtSceneContext(memory.scenes, here, locPath);
   if (sceneBlock) st.push(`地点记忆:\n${sceneBlock}`);
   const current = findCurrentScene(memory.scenes, here, locPath);
-  const chain = sceneChain(memory.scenes, current);
+  const sceneIndex = buildSceneLocationIndex(memory.scenes);
 
   // 物品分两组省 token:可达(随身 / 存放地落在当前地点或其祖先链)发全量(名+量+描述);
   // 他处寄存的只发名+数量(砍掉描述这个大头),既省 token 又不至于让主模型以为东西没了。
-  const reachable = memory.items.filter(i => i.carried !== false || itemReachableInScene(i.location, here, chain));
-  const elsewhere = memory.items.filter(i => !(i.carried !== false || itemReachableInScene(i.location, here, chain)));
+  const reachable: MemItem[] = [];
+  const elsewhere: MemItem[] = [];
+  for (const item of memory.items) {
+    if (item.carried !== false || itemReachableAtScene(memory.scenes, item.location, current, here, sceneIndex)) {
+      reachable.push(item);
+    } else {
+      elsewhere.push(item);
+    }
+  }
   st.push(`物品清单:\n${fmtItems(reachable.map(i => ({ name: i.name, qty: i.qty, desc: i.desc, carried: i.carried, location: i.location })))}`);
   if (elsewhere.length) {
     // 仅名+数量,按地点括注;无描述
