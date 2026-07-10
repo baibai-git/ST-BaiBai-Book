@@ -17,18 +17,30 @@ export interface ChatMsg {
   content: string;
 }
 
-export class ApiError extends Error { }
-
-/** 规范化 base url:确保以 /v1 结尾(多数 OpenAI 兼容服务需要) */
-function normalizeUrl(url: string): string {
-  let u = url.trim().replace(/\/+$/, '');
-  if (!u) return u;
-  if (!/\/v\d+$/.test(u) && !/\/chat\/completions$/.test(u)) {
-    u += '/v1';
+export class ApiError extends Error {
+  constructor(message: string, readonly status?: number) {
+    super(message);
+    this.name = 'ApiError';
   }
-  // 端点期望 base(不含 /chat/completions),去掉它
-  u = u.replace(/\/chat\/completions$/, '');
+}
+
+/**
+ * 规范化 OpenAI 兼容 base url:
+ * - 用户填完整 /chat/completions 时只去掉端点后缀;
+ * - 纯域名自动补 /v1;
+ * - 已带路径的地址原样保留,避免破坏 /v2/coding 等自定义路由。
+ */
+function normalizeUrl(url: string): string {
+  const u = url.trim().replace(/\/+$/, '');
+  if (!u) return u;
+  if (/\/chat\/completions$/i.test(u)) return u.replace(/\/chat\/completions$/i, '');
+  if (/^https?:\/\/[^/?#]+$/i.test(u)) return `${u}/v1`;
   return u;
+}
+
+/** 测试渠道时备用的 /v1 形式。只在首个地址明确返回 404/405 时才会尝试。 */
+function alternateUrl(url: string): string {
+  return /\/v1$/i.test(url) ? url.replace(/\/v1$/i, '') : `${url}/v1`;
 }
 
 export interface RequestOptions {
@@ -81,6 +93,15 @@ export async function requestCompletion(
   messages: ChatMsg[],
   opts: RequestOptions = {},
 ): Promise<string> {
+  return requestCompletionAtUrl(channel, messages, normalizeUrl(channel.url), opts);
+}
+
+async function requestCompletionAtUrl(
+  channel: ApiChannel,
+  messages: ChatMsg[],
+  reverseProxy: string,
+  opts: RequestOptions = {},
+): Promise<string> {
   const ctx = getContext();
   if (!ctx) throw new ApiError('SillyTavern 上下文不可用');
   if (!channel.url || !channel.model) throw new ApiError('副 API 渠道未配置完整(缺 url 或 model)');
@@ -95,7 +116,7 @@ export async function requestCompletion(
       : messages;
   const body: Record<string, unknown> = {
     chat_completion_source: 'openai',
-    reverse_proxy: normalizeUrl(channel.url),
+    reverse_proxy: reverseProxy,
     proxy_password: channel.key || '',
     model: channel.model,
     messages: outMessages,
@@ -126,7 +147,7 @@ export async function requestCompletion(
 
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
-      throw new ApiError(`副 API 请求失败 (${resp.status}): ${text.slice(0, 300)}`);
+      throw new ApiError(`副 API 请求失败 (${resp.status}): ${text.slice(0, 300)}`, resp.status);
     }
 
     // 流式:按 SSE 增量拼接;非流式:直接解析 JSON。
@@ -227,11 +248,43 @@ export async function requestViaMainApi(messages: ChatMsg[], _opts: RequestOptio
 
 /** 连通性测试:发一条极短请求 */
 export async function testChannel(channel: ApiChannel): Promise<{ ok: boolean; message: string }> {
+  const primaryUrl = normalizeUrl(channel.url);
   try {
-    const reply = await requestCompletion(channel, [{ role: 'user', content: '回复"ok"两个字符即可。' }]);
-    return { ok: true, message: `连通正常,返回:${reply.slice(0, 40)}` };
+    const reply = await requestCompletionAtUrl(
+      channel,
+      [{ role: 'user', content: '回复"ok"两个字符即可。' }],
+      primaryUrl,
+    );
+    const changed = channel.url.trim().replace(/\/+$/, '') !== primaryUrl;
+    if (changed) channel.url = primaryUrl;
+    return {
+      ok: true,
+      message: `连通正常${changed ? `,已采用:${primaryUrl}` : ''},返回:${reply.slice(0, 40)}`,
+    };
   } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+    if (!(e instanceof ApiError) || (e.status !== 404 && e.status !== 405)) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e) };
+    }
+
+    const fallbackUrl = alternateUrl(primaryUrl);
+    if (!fallbackUrl || fallbackUrl === primaryUrl) {
+      return { ok: false, message: e.message };
+    }
+    try {
+      const reply = await requestCompletionAtUrl(
+        channel,
+        [{ role: 'user', content: '回复"ok"两个字符即可。' }],
+        fallbackUrl,
+      );
+      channel.url = fallbackUrl;
+      return {
+        ok: true,
+        message: `连通正常,已自动改用:${fallbackUrl},返回:${reply.slice(0, 40)}`,
+      };
+    } catch {
+      // 备用地址也失败时保留首个错误,避免把模型名等真实问题掩盖成路径错误。
+      return { ok: false, message: e.message };
+    }
   }
 }
 
