@@ -82,6 +82,7 @@ console.log(api.capabilities);
 const snapshot = globalThis.STBaiBaiBook.getSnapshot();
 
 console.log(snapshot.state);
+console.log(snapshot.protagonist);
 console.log(snapshot.vars);
 console.log(snapshot.items);
 console.log(snapshot.plans);
@@ -113,6 +114,13 @@ console.log(snapshot.itemLog);
     missingAiFloors: [],
   },
   state: { time: "...", location: "...", locationPath: [] },
+  protagonist: {
+    gender: "女",
+    identity: "调查员",
+    appearance: "黑色短发，左眉有疤",
+    outfit: "深色风衣",
+    condition: "左臂轻伤",
+  },
   vars: {},
   items: [],
   plans: [],
@@ -227,7 +235,7 @@ const result = globalThis.STBaiBaiBook.query({
 支持的 `resource`：
 
 ```text
-var, vars, state, items, plans, scenes, npcs, itemLog,
+var, vars, state, protagonist, items, plans, scenes, npcs, itemLog,
 snapshot, history, injectedHistory, floor, context
 ```
 

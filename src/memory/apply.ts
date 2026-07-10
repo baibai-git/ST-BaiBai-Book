@@ -3,7 +3,7 @@ import { fmtItemLogInline } from './prompts';
 import { memory, recomputeDerived, saveMemory, scheduleLeafFlush } from './store';
 import { readItemsTagText, writeItemLogTag, writeVarLogTag } from './timeTag';
 import { createEmptyMemory } from './types';
-import type { BaibaiMemory, ItemDelta, ItemLogEntry, JsonValue, LeafExtra, MemNpc, MemPlan, MemScene, MemSummary, NpcDelta, PlanResolveItem, SceneDelta, SceneReparent, StoredDelta, SummaryDelta, VarOp, VarTemplate, VarTier } from './types';
+import type { BaibaiMemory, ItemDelta, ItemLogEntry, JsonValue, LeafExtra, MemNpc, MemPlan, MemScene, MemSummary, NpcDelta, PlanResolveItem, ProtagonistDelta, SceneDelta, SceneReparent, StoredDelta, SummaryDelta, VarOp, VarTemplate, VarTier } from './types';
 
 let idSeq = 0;
 /** 生成稳定唯一 id(不依赖 random;时间走 nowMs 便于测试注入) */
@@ -33,6 +33,13 @@ function scalarText(v: unknown): string {
 
 function optText(v: unknown): string | undefined {
   return scalarText(v) || undefined;
+}
+
+/** 覆盖补丁文本:undefined=未提供;空字符串=明确清空。 */
+function patchText(v: unknown): string | undefined {
+  if (typeof v === 'string') return v.trim();
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v).trim();
+  return undefined;
 }
 
 function optBool(v: unknown): boolean | undefined {
@@ -156,6 +163,16 @@ function cleanNpcList(v: unknown): NpcDelta[] {
   return arr(v).map(cleanNpcDelta).filter((x): x is NpcDelta => !!x);
 }
 
+function cleanProtagonistDelta(raw: unknown): ProtagonistDelta | null {
+  if (!isRecord(raw)) return null;
+  const out: ProtagonistDelta = {};
+  for (const key of ['gender', 'identity', 'appearance', 'outfit', 'condition'] as const) {
+    const value = patchText(raw[key]);
+    if (value !== undefined) out[key] = value;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 type PlanAdd = { kind: 'plan' | 'suspense'; content: string; createdTime?: string; targetTime?: string };
 
 function cleanPlanAdd(raw: unknown): PlanAdd | null {
@@ -201,6 +218,8 @@ function cleanStoredDelta(raw: StoredDelta): StoredDelta {
   if (time) out.time = time;
   if (location) out.location = location;
   if (raw.locationPath !== undefined) out.locationPath = locationPath;
+  const protagonist = cleanProtagonistDelta(raw.protagonist);
+  if (protagonist) out.protagonist = protagonist;
 
   if (isRecord(raw.items)) {
     const items: NonNullable<StoredDelta['items']> = {};
@@ -606,6 +625,13 @@ function applyNpcState(n: { outfit?: string; condition?: string; important?: boo
   if (typeof src.important === 'boolean') n.important = src.important || undefined;
 }
 
+/** 主角档案是纯覆盖快照;空字符串表示清除旧值。 */
+function applyProtagonistState(target: BaibaiMemory['protagonist'], src: ProtagonistDelta): void {
+  for (const key of ['gender', 'identity', 'appearance', 'outfit', 'condition'] as const) {
+    if (typeof src[key] === 'string') target[key] = src[key]!.trim() || undefined;
+  }
+}
+
 /**
  * 逐级 upsert 一条场景路径到派生场景树。
  * 遍历 path 的每个前缀确保每级节点存在(缺则创建,父 id 由上一级前缀算出);
@@ -969,6 +995,7 @@ function applyStoredDeltaTo(mem: BaibaiMemory, d: StoredDelta, leaf: { id: strin
     const lp = normScenePath(d.locationPath);
     mem.state.locationPath = lp.length ? lp : undefined;
   }
+  if (d.protagonist) applyProtagonistState(mem.protagonist, d.protagonist);
 
   // 物品(一切计数:add 默认 +1,带符号累加,数量 ≤0 自动移除)
   if (d.items) {
@@ -1150,11 +1177,11 @@ function applyStoredDeltaTo(mem: BaibaiMemory, d: StoredDelta, leaf: { id: strin
 export function deriveMemory(
   chat: STMessage[] | null,
   upToExclusive?: number,
-): Pick<BaibaiMemory, 'state' | 'items' | 'plans' | 'scenes' | 'npcs' | 'itemLog' | 'vars'> {
+): Pick<BaibaiMemory, 'state' | 'protagonist' | 'items' | 'plans' | 'scenes' | 'npcs' | 'itemLog' | 'vars'> {
   const mem = createEmptyMemory();
   // 变量从三层合并模板起算(无 chat 也返回初始状态);seed 时展开模板里的 ST 宏({{user}} 等)
   mem.vars = expandVarMacros(mergeTemplates(memory.varTemplates));
-  if (!chat) return { state: mem.state, items: mem.items, plans: mem.plans, scenes: mem.scenes, npcs: mem.npcs, itemLog: mem.itemLog, vars: mem.vars };
+  if (!chat) return { state: mem.state, protagonist: mem.protagonist, items: mem.items, plans: mem.plans, scenes: mem.scenes, npcs: mem.npcs, itemLog: mem.itemLog, vars: mem.vars };
   const end = typeof upToExclusive === 'number' ? Math.min(upToExclusive, chat.length) : chat.length;
   for (let i = 0; i < end; i++) {
     if (chat[i]?.extra?.bbs_omit) continue; // 番外楼:不参与派生重放
@@ -1166,7 +1193,7 @@ export function deriveMemory(
   }
   // 只留最近若干条变动(注入/喂模型够用即可,省 token)
   if (mem.itemLog.length > ITEM_LOG_KEEP) mem.itemLog = mem.itemLog.slice(-ITEM_LOG_KEEP);
-  return { state: mem.state, items: mem.items, plans: mem.plans, scenes: mem.scenes, npcs: mem.npcs, itemLog: mem.itemLog, vars: mem.vars };
+  return { state: mem.state, protagonist: mem.protagonist, items: mem.items, plans: mem.plans, scenes: mem.scenes, npcs: mem.npcs, itemLog: mem.itemLog, vars: mem.vars };
 }
 
 /** 变动日志保留的最近条数(注入与喂摘要共用)。 */
@@ -1300,6 +1327,8 @@ export function finalizeDelta(delta: SummaryDelta, openPlansOrdered: { id: strin
   // 权威定位路径:规范化后非空才固化(只有给了 location 才有意义,但不强制——手动场景可单独给)
   const lp = cleanPath(delta.locationPath);
   if (lp.length) out.locationPath = lp;
+  const protagonist = cleanProtagonistDelta(delta.protagonist);
+  if (protagonist) out.protagonist = protagonist;
 
   if (isRecord(delta.items)) {
     const items: NonNullable<StoredDelta['items']> = {};
@@ -1416,6 +1445,9 @@ export function appendOpToLatestLeaf(op: StoredDelta): boolean {
   const { index, leaf } = found;
   const d: StoredDelta = (leaf.delta ??= {});
 
+  if (op.protagonist) {
+    d.protagonist = { ...(d.protagonist ?? {}), ...op.protagonist };
+  }
   if (op.items) {
     // 关键:同名物品在 add/update 与 remove 之间必须互斥(跨桶抵消),否则改名(remove旧+add新)
     // 往返会让 remove 桶残留旧名,而重放固定按 add→update→remove 分组——最后的 remove 会把刚
@@ -1507,6 +1539,12 @@ export function appendOpToLatestLeaf(op: StoredDelta): boolean {
  */
 export function setVarsRoot(newJson: Record<string, JsonValue>): boolean {
   return appendOpToLatestLeaf({ varOps: [{ op: 'set', path: '', value: newJson }] });
+}
+
+/** 手动覆盖主角当前档案。空字符串会清除对应旧值。 */
+export function setProtagonist(patch: ProtagonistDelta): boolean {
+  const clean = cleanProtagonistDelta(patch);
+  return clean ? appendOpToLatestLeaf({ protagonist: clean }) : false;
 }
 
 /**

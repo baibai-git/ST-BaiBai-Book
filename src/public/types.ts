@@ -4,6 +4,7 @@ import type {
   MemItem,
   MemNpc,
   MemPlan,
+  MemProtagonist,
   MemScene,
   MemState,
   StoredDelta,
@@ -55,6 +56,7 @@ export interface PublicSnapshot {
   };
   coverage: PublicCoverage;
   state: MemState;
+  protagonist: MemProtagonist;
   vars: Record<string, JsonValue>;
   items: MemItem[];
   plans: MemPlan[];
@@ -142,6 +144,7 @@ export type PublicQueryResource =
   | 'var'
   | 'vars'
   | 'state'
+  | 'protagonist'
   | 'items'
   | 'plans'
   | 'scenes'
@@ -165,6 +168,7 @@ export type PublicQueryResult =
   | JsonValue
   | Record<string, JsonValue>
   | MemState
+  | MemProtagonist
   | MemItem[]
   | MemPlan[]
   | MemScene[]

@@ -133,6 +133,7 @@ export function getSnapshot(options?: SnapshotOptions): PublicSnapshot {
     point,
     coverage: coverageAt(chat, point.upToExclusive),
     state: derived.state,
+    protagonist: derived.protagonist,
     vars: derived.vars,
     items: derived.items,
     plans: derived.plans,
@@ -361,6 +362,8 @@ export function query(request: PublicQueryRequest): PublicQueryResult {
       return getSnapshot(snapshotOptions).vars;
     case 'state':
       return getSnapshot(snapshotOptions).state;
+    case 'protagonist':
+      return getSnapshot(snapshotOptions).protagonist;
     case 'items':
       return getSnapshot(snapshotOptions).items;
     case 'plans':

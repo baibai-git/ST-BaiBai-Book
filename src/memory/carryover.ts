@@ -65,6 +65,7 @@ function deltaHasData(delta: StoredDelta): boolean {
     delta.time ||
     delta.location ||
     delta.locationPath?.length ||
+    (delta.protagonist && Object.keys(delta.protagonist).length) ||
     delta.items?.add?.length ||
     delta.items?.update?.length ||
     delta.items?.remove?.length ||
@@ -90,6 +91,9 @@ function encodeStateAsDelta(state: ReturnType<typeof deriveMemory>): StoredDelta
   if (state.state.location) {
     delta.location = state.state.location;
     if (state.state.locationPath?.length) delta.locationPath = state.state.locationPath;
+  }
+  if (Object.values(state.protagonist).some(Boolean)) {
+    delta.protagonist = { ...state.protagonist };
   }
 
   if (state.items.length) {

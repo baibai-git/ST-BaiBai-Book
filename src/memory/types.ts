@@ -188,6 +188,24 @@ export interface MemNpc {
 }
 
 /**
+ * 用户操控的主角当前档案(派生产物,不持久化)。
+ * 只记录剧情中明确出现、会影响后续续写的客观事实;不从行为推断性格或内心。
+ * 地点与物品已有独立状态,不在这里重复。
+ */
+export interface MemProtagonist {
+  /** 性别/性别表现(正文明确时记录) */
+  gender?: string;
+  /** 当前身份、职业、种族或公开地位 */
+  identity?: string;
+  /** 当前稳定外貌/身体特征;永久变身、伤疤等变化后覆盖 */
+  appearance?: string;
+  /** 当前着装(覆盖型) */
+  outfit?: string;
+  /** 当前身体状态/健康(覆盖型;恢复正常后清空) */
+  condition?: string;
+}
+
+/**
  * 计划/悬念的「了结方式」。区分三种截然不同的收场,避免统一「已完成」误导主模型:
  *  - done      = 计划真去做成/兑现了、悬念真揭晓了(结果已明确);
  *  - cancelled = 没做成而是被取消/撤回/放弃/作废/不再需要(如对方收回要求、当场被化解退让);
@@ -317,6 +335,8 @@ export interface BaibaiMemory {
   version: number;
   /** 派生缓存:重放叶子 delta 得到 */
   state: MemState;
+  /** 派生缓存:用户操控主角的当前客观档案 */
+  protagonist: MemProtagonist;
   /** 派生缓存 */
   items: MemItem[];
   /** 派生缓存 */
@@ -339,6 +359,7 @@ export function createEmptyMemory(): BaibaiMemory {
   return {
     version: MEMORY_VERSION,
     state: { time: '', location: '' },
+    protagonist: {},
     items: [],
     plans: [],
     scenes: [],
@@ -386,6 +407,18 @@ export interface NpcDelta {
   location?: string;
 }
 
+/**
+ * 主角当前档案的覆盖补丁。
+ * 字段省略=保持不变;空字符串=明确清空旧值(如伤势痊愈、脱下旧着装)。
+ */
+export interface ProtagonistDelta {
+  gender?: string;
+  identity?: string;
+  appearance?: string;
+  outfit?: string;
+  condition?: string;
+}
+
 /** 场景指令里单个地点的形状(AI / 手动共用) */
 export interface SceneDelta {
   /** 完整地理路径,由粗到细(如 ["王都","城西区","归雁客栈"]) */
@@ -421,6 +454,8 @@ export interface SummaryDelta {
   location?: string;
   /** 覆盖型:当前所在的已记录场景节点完整路径(由粗到细);与 location 同时给,作权威定位 */
   locationPath?: string[];
+  /** 覆盖型:用户操控主角的当前客观档案变化 */
+  protagonist?: ProtagonistDelta;
   /** 指令型:物品增删改 */
   items?: {
     add?: ItemDelta[];
@@ -475,6 +510,8 @@ export interface StoredDelta {
   location?: string;
   /** 覆盖型:当前所在的已记录场景节点完整路径(由粗到细);权威定位 */
   locationPath?: string[];
+  /** 覆盖型:用户操控主角的当前客观档案变化 */
+  protagonist?: ProtagonistDelta;
   items?: {
     add?: ItemDelta[];
     update?: ItemDelta[];

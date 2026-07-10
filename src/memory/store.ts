@@ -61,6 +61,9 @@ export function recomputeDerived(): void {
   memory.state.time = d.state.time;
   memory.state.location = d.state.location;
   memory.state.locationPath = d.state.locationPath;
+  for (const key of ['gender', 'identity', 'appearance', 'outfit', 'condition'] as const) {
+    memory.protagonist[key] = d.protagonist[key];
+  }
   memory.items.splice(0, memory.items.length, ...d.items);
   memory.plans.splice(0, memory.plans.length, ...d.plans);
   memory.scenes.splice(0, memory.scenes.length, ...d.scenes);
@@ -239,6 +242,7 @@ function migrateV2toV3(raw: Record<string, unknown>, chat: STMessage[] | null): 
 function mergeStoredDelta(a: StoredDelta, b: StoredDelta): void {
   if (b.time) a.time = b.time;
   if (b.location) a.location = b.location;
+  if (b.protagonist) a.protagonist = { ...(a.protagonist ?? {}), ...b.protagonist };
   if (b.items) {
     const ai = (a.items ??= {});
     if (b.items.add?.length) (ai.add ??= []).push(...b.items.add);

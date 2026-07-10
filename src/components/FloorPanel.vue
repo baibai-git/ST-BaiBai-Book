@@ -142,6 +142,30 @@ const npcTags = computed<Tag[]>(() => {
   (np.remove ?? []).forEach((name, i) => out.push({ key: `npc:remove:${i}`, op: 'remove', bucket: 'remove', idx: i, text: name, editable: true }));
   return out;
 });
+const protagonistTags = computed<Tag[]>(() => {
+  const protagonist = d.value?.protagonist;
+  if (!protagonist) return [];
+  const labels: Record<keyof typeof protagonist, string> = {
+    gender: '性别',
+    identity: '身份',
+    appearance: '外貌',
+    outfit: '着装',
+    condition: '状态',
+  };
+  const parts = (Object.keys(labels) as Array<keyof typeof protagonist>)
+    .filter(key => protagonist[key] !== undefined)
+    .map(key => `${labels[key]}:${protagonist[key] || '(清空)'}`);
+  if (!parts.length) return [];
+  return [{
+    key: 'protagonist:update:0',
+    op: 'update',
+    bucket: 'update',
+    idx: 0,
+    text: '主角档案',
+    sub: parts.join(' · '),
+    editable: false,
+  }];
+});
 const sceneTags = computed<Tag[]>(() => {
   const sc = d.value?.scenes;
   if (!sc) return [];
@@ -208,7 +232,7 @@ function parseVarValue(text: string): JsonValue {
 }
 
 const hasAnyDelta = computed(
-  () => itemTags.value.length || npcTags.value.length || sceneTags.value.length || planTags.value.length || varTags.value.length || !!d.value?.location,
+  () => protagonistTags.value.length || itemTags.value.length || npcTags.value.length || sceneTags.value.length || planTags.value.length || varTags.value.length || !!d.value?.location,
 );
 
 /* ============ 就地编辑 ============ */
@@ -485,6 +509,10 @@ function saveTag(tag: Tag) {
 function deleteTag(tag: Tag) {
   const [cat, bucket] = tag.key.split(':');
   commitDelta(dd => {
+    if (cat === 'protagonist') {
+      delete dd.protagonist;
+      return;
+    }
     if (cat === 'var') {
       if (Array.isArray(dd.varOps)) dd.varOps.splice(tag.idx, 1); // varOps 是扁平数组,直接按序号删
       return;
@@ -532,6 +560,7 @@ async function toggleOmit() {
 
 // 分组渲染表(模板里循环用,减少重复)。icon 复用导航同款描边图标,给每个类目一个可辨识的视觉锚点。
 const groups = computed(() => [
+  { title: '主角', icon: 'characters', tags: protagonistTags.value },
   { title: '物品', icon: 'items', tags: itemTags.value },
   { title: '角色', icon: 'npcs', tags: npcTags.value },
   { title: '场景', icon: 'scenes', tags: sceneTags.value },

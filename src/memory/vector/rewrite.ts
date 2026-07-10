@@ -7,7 +7,7 @@
  *  - 状态一律走 deriveMemory(不假设 getLatestState 干净);
  *  - 状态快照精确放置:从窗口起点扫到第一个「无有效叶子」的楼停下,
  *    快照 = deriveMemory(chat, 洞楼index),插在「连续叶子前缀末尾」之后、洞楼之前;
- *  - 快照只含**滚出窗口的 items/plans**(时间/地点/在场已在全文里,不重复)。
+ *  - 快照只含**滚出窗口的主角档案/items/plans**(时间/地点/在场已在全文里,不重复)。
  *
  * 产出多条 query,各自 embed → 后端 vec/search 多路检索 + RRF 融合;INTENT 兼作 rerank 的 query。
  * 任何失败都抛错,由召回侧 catch 后降级为「最近上下文当单 query」。
@@ -19,7 +19,7 @@ import { apiSettings, resolveVectorModel } from '@/api/settings';
 import { deriveMemory, getLeaf, leafValid } from '../apply';
 import { resolveKeepStart } from '../engine';
 import { renderHistoryNodes, selectHistoryNodesBefore } from '../inject';
-import { fmtItems, fmtNpcs, fmtPlans, JAILBREAK_PROMPT, QUERY_REWRITE_SYSTEM, QUERY_REWRITE_TAIL } from '../prompts';
+import { fmtItems, fmtNpcs, fmtPlans, fmtProtagonist, JAILBREAK_PROMPT, QUERY_REWRITE_SYSTEM, QUERY_REWRITE_TAIL } from '../prompts';
 import { memory } from '../store';
 import { cleanBody } from '../timeTag';
 import { fetchWithTimeoutRetry } from './embed';
@@ -53,6 +53,9 @@ function cleanFloor(m: STMessage): string {
 function buildStateSnapshot(chat: STMessage[], upTo: number): string {
   const st = deriveMemory(chat, upTo);
   const lines: string[] = [];
+  if (Object.values(st.protagonist).some(Boolean)) {
+    lines.push(`主角当前档案:\n${fmtProtagonist(st.protagonist)}`);
+  }
   if (st.items.length) {
     lines.push(`物品清单:\n${fmtItems(st.items.map(i => ({ name: i.name, qty: i.qty, desc: i.desc, carried: i.carried, location: i.location })))}`);
   }
@@ -64,7 +67,7 @@ function buildStateSnapshot(chat: STMessage[], upTo: number): string {
     lines.push(`未了结的计划/悬念:\n${fmtPlans(openPlans.map(p => ({ kind: p.kind, content: p.content, createdTime: p.createdTime, targetTime: p.targetTime })))}`);
   }
   if (!lines.length) return '';
-  return `[状态快照:以下为已滚出最近窗口、但仍有效的物品、NPC 与未了结计划,供你解析模糊指代]\n${lines.join('\n')}`;
+  return `[状态快照:以下为已滚出最近窗口、但仍有效的主角档案、物品、NPC 与未了结计划,供你解析模糊指代]\n${lines.join('\n')}`;
 }
 
 /**

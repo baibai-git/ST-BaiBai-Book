@@ -2,13 +2,53 @@
 import Icon from '@/components/Icon.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import ModalMask from '@/components/ModalMask.vue';
-import { classifyNpcPresence, editNpc, removeNpc, setNpcFollow, setNpcImportant, upsertNpc } from '@/memory/apply';
+import { classifyNpcPresence, editNpc, removeNpc, setNpcFollow, setNpcImportant, setProtagonist, upsertNpc } from '@/memory/apply';
 import { derivedMeta, memory } from '@/memory/store';
 import type { MemNpc } from '@/memory/types';
+import { getContext } from '@/st/context';
 import { computed, nextTick, ref } from 'vue';
 
 // NPC 是从叶子摘要重放出的派生数据,手动操作写入「最新一条有效叶子」;无有效叶子时无处挂载。
 const hasLeaf = computed(() => derivedMeta.hasLeaf);
+const protagonistName = computed(() => {
+  void derivedMeta.rev;
+  return getContext()?.name1?.trim() || '主角';
+});
+const protagonistHasData = computed(() => Object.values(memory.protagonist).some(value => !!value?.trim()));
+const protagonistHasDetails = computed(() => [
+  memory.protagonist.identity,
+  memory.protagonist.appearance,
+  memory.protagonist.outfit,
+  memory.protagonist.condition,
+].some(value => !!value?.trim()));
+
+interface ProtagonistDraft {
+  gender: string;
+  identity: string;
+  appearance: string;
+  outfit: string;
+  condition: string;
+}
+const protagonistEditing = ref<ProtagonistDraft | null>(null);
+
+function openProtagonistEdit() {
+  if (!hasLeaf.value) return;
+  protagonistEditing.value = {
+    gender: memory.protagonist.gender ?? '',
+    identity: memory.protagonist.identity ?? '',
+    appearance: memory.protagonist.appearance ?? '',
+    outfit: memory.protagonist.outfit ?? '',
+    condition: memory.protagonist.condition ?? '',
+  };
+}
+function cancelProtagonistEdit() {
+  protagonistEditing.value = null;
+}
+function saveProtagonistEdit() {
+  const draft = protagonistEditing.value;
+  if (!draft) return;
+  if (setProtagonist({ ...draft })) protagonistEditing.value = null;
+}
 
 // 触屏判定:跳过弹窗自动聚焦(移动端自动聚焦会弹输入法挡界面),与场景/摘要页一致。
 const isTouch = typeof window !== 'undefined' && window.matchMedia?.('(hover: none)').matches;
@@ -173,6 +213,39 @@ function confirmRemove() {
     </div>
 
     <hr class="bbs-rule" />
+
+    <div class="bbs-protagonist-section">
+      <div class="bbs-npc-grouphead">
+        <span class="bbs-npc-grouptag is-protagonist"><Icon name="characters" />主角</span>
+        <span class="bbs-npc-grouphint">始终完整发送,与 NPC 名册分开记录</span>
+      </div>
+      <article class="bbs-npc bbs-protagonist">
+        <div class="bbs-npc-body">
+          <div class="bbs-npc-head">
+            <span class="bbs-npc-name">{{ protagonistName }}</span>
+            <span v-if="memory.protagonist.gender" class="bbs-npc-gender">{{ memory.protagonist.gender }}</span>
+            <span class="bbs-npc-acts">
+              <button
+                class="bbs-item-act"
+                type="button"
+                :disabled="!hasLeaf"
+                :title="hasLeaf ? '编辑主角当前档案' : '需先有摘要才能编辑'"
+                @click="openProtagonistEdit"
+              >
+                <Icon name="edit" />
+              </button>
+            </span>
+          </div>
+          <dl v-if="protagonistHasDetails" class="bbs-npc-fields">
+            <div v-if="memory.protagonist.identity" class="bbs-npc-field f-title"><dt>身份</dt><dd>{{ memory.protagonist.identity }}</dd></div>
+            <div v-if="memory.protagonist.appearance" class="bbs-npc-field f-desc"><dt>外貌</dt><dd>{{ memory.protagonist.appearance }}</dd></div>
+            <div v-if="memory.protagonist.outfit" class="bbs-npc-field f-outfit"><dt>着装</dt><dd>{{ memory.protagonist.outfit }}</dd></div>
+            <div v-if="memory.protagonist.condition" class="bbs-npc-field f-cond"><dt>状态</dt><dd>{{ memory.protagonist.condition }}</dd></div>
+          </dl>
+          <p v-else-if="!protagonistHasData" class="bbs-npc-mainhint">尚无主角状态记录。后续摘要会从剧情中的明确事实逐步补充。</p>
+        </div>
+      </article>
+    </div>
 
     <div v-if="memory.npcs.length" class="bbs-npc-groups">
       <!-- 主要角色:核心主演,永远全量发送。这里突出「即时状态面板」(着装/状态/所在),弱化身份档案 -->
@@ -344,8 +417,41 @@ function confirmRemove() {
 
     <div v-else class="bbs-empty">
       <span class="bbs-empty-icon"><Icon name="npcs" /></span>
-      <p>还没有登场的角色。摘要时会记下与主角有交集的人物,也可点右上角「+」手动添加。</p>
+      <p>还没有登场的 NPC。摘要时会记下与主角有交集的人物,也可点右上角「+」手动添加。</p>
     </div>
+
+    <ModalMask :open="!!protagonistEditing" @close="cancelProtagonistEdit">
+      <div v-if="protagonistEditing" class="bbs-modal" role="dialog" aria-modal="true" aria-label="编辑主角档案">
+        <header class="bbs-modal-head">
+          <span class="bbs-modal-title">编辑主角档案</span>
+          <button class="bbs-item-act" type="button" title="关闭" @click="cancelProtagonistEdit"><Icon name="close" /></button>
+        </header>
+        <label class="bbs-modal-field">
+          <span class="bbs-modal-label">性别</span>
+          <input v-model="protagonistEditing.gender" class="bbs-input" type="text" placeholder="如:男、女" />
+        </label>
+        <label class="bbs-modal-field">
+          <span class="bbs-modal-label">当前身份 / 职业 / 种族 / 公开地位</span>
+          <textarea v-model="protagonistEditing.identity" v-autosize class="bbs-input bbs-modal-textarea bbs-modal-autogrow" rows="1" placeholder="可选"></textarea>
+        </label>
+        <label class="bbs-modal-field">
+          <span class="bbs-modal-label">稳定外貌 / 身体特征</span>
+          <textarea v-model="protagonistEditing.appearance" class="bbs-input bbs-modal-textarea" rows="2" placeholder="如:黑色短发、左眉有疤"></textarea>
+        </label>
+        <label class="bbs-modal-field">
+          <span class="bbs-modal-label">当前着装</span>
+          <textarea v-model="protagonistEditing.outfit" v-autosize class="bbs-input bbs-modal-textarea bbs-modal-autogrow" rows="1" placeholder="可选"></textarea>
+        </label>
+        <label class="bbs-modal-field">
+          <span class="bbs-modal-label">当前身体状态 / 健康</span>
+          <textarea v-model="protagonistEditing.condition" v-autosize class="bbs-input bbs-modal-textarea bbs-modal-autogrow" rows="1" placeholder="无异常时留空"></textarea>
+        </label>
+        <footer class="bbs-modal-foot">
+          <button class="bbs-btn" type="button" @click="cancelProtagonistEdit">取消</button>
+          <button class="bbs-btn bbs-btn-primary" type="button" @click="saveProtagonistEdit">保存</button>
+        </footer>
+      </div>
+    </ModalMask>
 
     <!-- 添加弹窗:position:fixed 内联(不用 Teleport,见 base.css 说明) -->
     <ModalMask :open="composerOpen" @close="closeComposer">
@@ -482,6 +588,12 @@ function confirmRemove() {
   flex-direction: column;
   gap: 18px;
 }
+.bbs-protagonist-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 18px;
+}
 .bbs-npc-group {
   display: flex;
   flex-direction: column;
@@ -521,6 +633,13 @@ function confirmRemove() {
   background: var(--bbs-accent);
   color: var(--bbs-accent-ink);
 }
+.bbs-npc-grouptag.is-protagonist {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bbs-warning-soft);
+  color: var(--bbs-warning);
+}
 .bbs-npc-grouphint {
   font-size: 11.5px;
   color: var(--bbs-ink-muted);
@@ -553,6 +672,16 @@ function confirmRemove() {
   width: 3px;
   background: var(--bbs-accent);
   opacity: 0.5;
+}
+.bbs-protagonist::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--bbs-warning);
+  opacity: 0.65;
 }
 /* 同区域:左色条更细更淡 —— 在「在场(3px@0.5)」与「不在场(无条)」之间的一档 */
 .bbs-npc.is-nearby::before {
@@ -765,6 +894,9 @@ function confirmRemove() {
 }
 /* 主要角色卡的操作区常驻(置顶组无需 hover 才显,星标本身就是状态指示) */
 .bbs-npc.is-main .bbs-npc-acts {
+  opacity: 1;
+}
+.bbs-protagonist .bbs-npc-acts {
   opacity: 1;
 }
 

@@ -19,7 +19,7 @@ import { memory } from './store';
 import { compactTimeLabel, formatRange, latestStoryTime, splitTimeLabel, timeTagPrompt } from './timeTag';
 import { relativeTimeLabel, weekdayLabel } from './timeRel';
 import { selectViewNodes, type ViewNode } from './select';
-import type { LeafExtra, MemItem, MemNpc, MemScene, MemSummary } from './types';
+import type { LeafExtra, MemItem, MemNpc, MemProtagonist, MemScene, MemSummary } from './types';
 
 // 摘要页列表复用同一套选择逻辑,经此 re-export(纯算法在 select.ts,零依赖、可单测)
 export { selectViewNodes, type ViewNode };
@@ -329,6 +329,22 @@ function oneLine(s: string | undefined): string {
   return (s ?? '').replace(/\s*[\r\n]+\s*/g, ' ').trim();
 }
 
+/** 主角不参与 NPC 在场分档;已有字段始终完整注入。 */
+function fmtProtagonistContext(protagonist: MemProtagonist, name: string): string {
+  const fields: Array<[string, string | undefined]> = [
+    ['性别', protagonist.gender],
+    ['身份', protagonist.identity],
+    ['外貌', protagonist.appearance],
+    ['着装', protagonist.outfit],
+    ['状态', protagonist.condition],
+  ];
+  const lines = fields
+    .filter(([, value]) => oneLine(value))
+    .map(([label, value]) => `  - ${label}:${oneLine(value)}`);
+  if (!lines.length) return '';
+  return `${oneLine(name) || '主角'}:\n${lines.join('\n')}`;
+}
+
 /** 把 NPC 的「即时状态」(着装/状态/所在)拼成一段尾注;无则空串。供在场与主要角色组复用。 */
 function npcStateTail(n: MemNpc, withPlace: boolean): string {
   const tail: string[] = [];
@@ -490,6 +506,9 @@ export function buildStateInjectionText(): string {
   }
   if (memory.state.location) st.push(`当前地点:${oneLine(memory.state.location)}`);
 
+  const protagonistBlock = fmtProtagonistContext(memory.protagonist, getContext()?.name1 ?? '');
+  if (protagonistBlock) st.push(`[主角当前状态]\n${protagonistBlock}`);
+
   const here = memory.state.location || '';
   const locPath = memory.state.locationPath;
   // 场景树:当前地点 + 祖先链(详细) + 其他地点(仅名称)。祖先链同时用于物品/NPC 可达判定。
@@ -532,7 +551,8 @@ export function buildStateInjectionText(): string {
 
   // 状态块在有任何有意义内容时才注入(物品/计划即使空也会有「(无)」占位,
   // 但只要存在摘要或时间/地点就值得带上整块)
-  const hasState = memory.state.time || memory.state.location || memory.items.length || memory.scenes.length || memory.npcs.length || openPlans.length || hasVarState;
+  const hasProtagonist = Object.values(memory.protagonist).some(value => !!oneLine(value));
+  const hasState = memory.state.time || memory.state.location || hasProtagonist || memory.items.length || memory.scenes.length || memory.npcs.length || openPlans.length || hasVarState;
   if (!hasState) return '';
   // 首尾私密简报框定,避免主模型把状态快照当成要复述/输出的模板(正文后跟吐一份状态)
   return `${MEMORY_BRIEFING_NOTE}\n[当前状态]\n${st.join('\n')}\n${MEMORY_BRIEFING_END}`;
