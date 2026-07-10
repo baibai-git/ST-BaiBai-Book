@@ -431,6 +431,20 @@ function toggleSelect(id: string) {
   selectedIds.value = next;
 }
 
+/** 根是否已全部勾选(驱动「全选 / 取消全选」文案) */
+const allSelected = computed(() => {
+  const roots = rootNodes.value;
+  return roots.length > 0 && roots.every(n => selectedIds.value.has(n.id));
+});
+/** 全选 / 取消全选切换:全选时写入全部根 id;已全选则清空。 */
+function toggleSelectAll() {
+  if (allSelected.value) {
+    selectedIds.value = new Set();
+  } else {
+    selectedIds.value = new Set(rootNodes.value.map(n => n.id));
+  }
+}
+
 /** 选中项在根序列(倒序)里的位置索引,升序排列 */
 const selectedRootIndexes = computed<number[]>(() => {
   const roots = rootNodes.value;
@@ -786,16 +800,23 @@ provide(SUMMARY_CTX, {
         :key="r.key"
         class="bbs-summary-card"
         :class="{ 'is-deep': r.level > 0, 'is-stale': r.stale, 'is-child': r.isChild, 'is-selected': selectMode && selectedIds.has(r.id) }"
+        :role="selectMode ? 'checkbox' : undefined"
+        :aria-checked="selectMode ? selectedIds.has(r.id) : undefined"
+        :tabindex="selectMode ? 0 : undefined"
+        @click="selectMode && toggleSelect(r.id)"
+        @keydown.enter.prevent="selectMode && toggleSelect(r.id)"
+        @keydown.space.prevent="selectMode && toggleSelect(r.id)"
       >
-        <!-- 选择模式:复选框(仅根行);点整卡也可勾选 -->
-        <label v-if="selectMode" class="bbs-summary-check">
+        <!-- 选择模式:复选框仅作视觉状态,点整卡即可勾选(label 不再包 input,避免双触发) -->
+        <span v-if="selectMode" class="bbs-summary-check" aria-hidden="true">
           <input
             class="bbs-checkbox"
             type="checkbox"
             :checked="selectedIds.has(r.id)"
-            @change="toggleSelect(r.id)"
+            tabindex="-1"
+            @click.stop
           />
-        </label>
+        </span>
         <div class="bbs-summary-main">
           <header class="bbs-summary-meta">
             <!-- 总结:层级标签 + 范围药丸 + 相对时间(留题首行)+ 绝对时间(窄屏换行) -->
@@ -851,7 +872,7 @@ provide(SUMMARY_CTX, {
       <p>还没有摘要。对话累积到设定楼层后会自动生成,也可在「未摘要楼层」里点楼层号单独补摘。</p>
     </div>
 
-    <!-- 选择模式底部操作条:显示已选统计 + 合并/取消。sticky 在页面底部 -->
+    <!-- 选择模式底部操作条:显示已选统计 + 全选/合并。sticky 在页面底部 -->
     <div v-if="selectMode" class="bbs-select-bar">
       <span class="bbs-select-info">
         <template v-if="selectionSummary.count">
@@ -864,6 +885,16 @@ provide(SUMMARY_CTX, {
         <template v-else>勾选连续的多条摘要合并</template>
       </span>
       <span v-if="selectionSummary.count >= 2 && !canMerge" class="bbs-select-warn">需选连续的摘要</span>
+      <!-- 全选/取消全选:列表长时免逐条点;文案随 allSelected 切换 -->
+      <button
+        class="bbs-btn bbs-btn-sm"
+        type="button"
+        :disabled="!rootNodes.length"
+        :title="allSelected ? '取消全选' : '全选全部根摘要'"
+        @click="toggleSelectAll"
+      >
+        {{ allSelected ? '取消全选' : '全选' }}
+      </button>
       <button
         class="bbs-btn bbs-btn-sm bbs-btn-primary"
         type="button"
@@ -1501,12 +1532,22 @@ provide(SUMMARY_CTX, {
 /* 卡片视觉(.bbs-summary-card / meta / 标签 / 展开条 / 收起条)已提到 base.css 全局,
    供 SummaryNode.vue 与本页平铺列表共用(scoped 不跨组件)。此处只留本页专属:选择模式 + 底部操作条。 */
 
-/* 选择模式:卡片左侧腾出复选框列,横向布局 */
+/* 选择模式:卡片左侧腾出复选框列,横向布局;整卡可点,指针提示可点 */
 .bbs-summary-list.is-selecting .bbs-summary-card {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  cursor: default;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  /* 键盘聚焦可见(role=checkbox 时 tabindex=0) */
+  outline: none;
+}
+.bbs-summary-list.is-selecting .bbs-summary-card:focus-visible {
+  outline: 2px solid var(--bbs-accent);
+  outline-offset: 1px;
+}
+.bbs-summary-list.is-selecting .bbs-summary-card:hover:not(.is-selected) {
+  border-color: var(--bbs-line-strong);
 }
 .bbs-summary-card.is-selected {
   border-color: var(--bbs-accent);
@@ -1517,13 +1558,13 @@ provide(SUMMARY_CTX, {
   display: inline-flex;
   align-items: center;
   padding-top: 2px;
-  cursor: pointer;
+  /* 不抢点击:整卡已负责 toggle,复选框仅视觉状态 */
+  pointer-events: none;
 }
 .bbs-summary-check .bbs-checkbox {
   width: 16px;
   height: 16px;
   accent-color: var(--bbs-accent);
-  cursor: pointer;
 }
 /* 选择模式下 main 占满剩余宽 */
 .bbs-summary-list.is-selecting .bbs-summary-main {
@@ -1541,7 +1582,8 @@ provide(SUMMARY_CTX, {
   z-index: 2;
   display: flex;
   align-items: center;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 10px 12px;
   margin-top: 14px;
   padding: 12px 14px;
   border: 1px solid var(--bbs-accent);
