@@ -26,6 +26,7 @@ import { computeMigrationPlan, runHoraeMigration, type MigrationPlan } from '@/m
 import { ui, THEMES, ORB_SHAPES, type NavPosition } from '@/state/ui';
 import { uploadOrbImage } from '@/st/upload';
 import { toast } from '@/st/toast';
+import { versionedAssetUrl } from '@/version';
 import { computed, nextTick, onMounted, ref } from 'vue';
 
 const navOptions: { value: NavPosition; label: string }[] = [
@@ -640,6 +641,47 @@ const recallStatusKind = computed<'ok' | 'warn' | 'fail' | 'pending'>(() => {
 // 分数(0~1)→ 进度条宽度百分比;负分(如未知)按 0 处理
 function scorePct(score: number): number {
   return Math.max(0, Math.min(1, score)) * 100;
+}
+
+/* —— 获取数据:宏速查 + 公共接口文档导出 —— */
+const DATA_MACROS = [
+  {
+    token: '{{bbsInjectedHistory}}',
+    title: '正常注入历史',
+    desc: '与柏宝书正常注入一致,自动跳过滑动窗口内仍发送全文的摘要。',
+  },
+  {
+    token: '{{bbsHistory}}',
+    title: '全部压缩历史',
+    desc: '返回当前聊天全部有效摘要与总结,包括滑动窗口内已有摘要的楼层。',
+  },
+  {
+    token: '{{bbsVars}}',
+    title: '全部变量',
+    desc: '返回当前自定义变量树的紧凑 JSON。',
+  },
+  {
+    token: '{{bbsVar::路径}}',
+    title: '单个变量',
+    desc: '按路径读取变量,例如 {{bbsVar::关系.爱丽丝.好感度}}。需要新版宏引擎。',
+  },
+] as const;
+
+async function copyDataMacro(token: string) {
+  try {
+    await navigator.clipboard.writeText(token);
+    toast(`已复制 ${token}`, 'success');
+  } catch {
+    toast('复制失败,请手动选择宏文本', 'error');
+  }
+}
+
+function exportPublicApiDocument() {
+  const anchor = document.createElement('a');
+  anchor.href = versionedAssetUrl('../PUBLIC_API.md', import.meta.url);
+  anchor.download = 'ST-BaiBai-Book-PUBLIC_API.md';
+  anchor.click();
+  toast('公共接口文档已导出', 'success');
 }
 </script>
 
@@ -1473,6 +1515,45 @@ function scorePct(score: number): number {
         </button>
         <p v-if="migrateMsg" class="bbs-field-hint">{{ migrateMsg }}</p>
       </Collapsible>
+
+      <!-- 获取数据 -->
+      <Collapsible title="获取数据" :open="false">
+        <p class="bbs-field-hint bbs-data-intro">
+          宏可用于提示词、变量说明和支持 ST 宏的其他位置。完整接口、命令和返回结构可导出为插件作者文档。
+        </p>
+
+        <div class="bbs-data-macros">
+          <div v-for="macro in DATA_MACROS" :key="macro.token" class="bbs-data-macro">
+            <div class="bbs-data-macro-main">
+              <div class="bbs-data-macro-head">
+                <span class="bbs-data-macro-title">{{ macro.title }}</span>
+                <code class="bbs-data-token">{{ macro.token }}</code>
+              </div>
+              <p class="bbs-data-desc">{{ macro.desc }}</p>
+            </div>
+            <button
+              class="bbs-icon-mini bbs-data-copy"
+              type="button"
+              :title="`复制 ${macro.token}`"
+              :aria-label="`复制 ${macro.token}`"
+              @click="copyDataMacro(macro.token)"
+            >
+              <Icon name="copy" />
+            </button>
+          </div>
+        </div>
+
+        <div class="bbs-data-export">
+          <div class="bbs-data-export-text">
+            <span class="bbs-field-label">公共接口文档</span>
+            <p class="bbs-data-desc">下载 PUBLIC_API.md,包含 JavaScript API、斜杠命令、宏、返回结构与使用示例。</p>
+          </div>
+          <button class="bbs-btn bbs-btn-primary" type="button" @click="exportPublicApiDocument">
+            <Icon name="download" />
+            导出文档
+          </button>
+        </div>
+      </Collapsible>
     </div>
 
     <!-- 带数据创建新对话 / Horae 迁移 的确认弹窗 -->
@@ -1875,6 +1956,63 @@ function scorePct(score: number): number {
   font-size: 12px;
   color: var(--bbs-ink-muted);
   line-height: 1.6;
+}
+
+/* 获取数据:宏速查列表 + 文档导出 */
+.bbs-data-intro {
+  margin-bottom: 10px;
+}
+.bbs-data-macros {
+  border-top: 1px solid var(--bbs-line);
+}
+.bbs-data-macro {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--bbs-line);
+}
+.bbs-data-macro-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.bbs-data-macro-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.bbs-data-macro-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bbs-ink);
+}
+.bbs-data-token {
+  max-width: 100%;
+  color: var(--bbs-accent);
+  font-family: var(--bbs-font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.bbs-data-desc {
+  margin: 4px 0 0;
+  color: var(--bbs-ink-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.bbs-data-copy {
+  flex: 0 0 auto;
+}
+.bbs-data-export {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 16px;
+}
+.bbs-data-export-text {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .bbs-segmented {
@@ -2916,6 +3054,14 @@ function scorePct(score: number): number {
   }
   .bbs-btn-label-short {
     display: inline;
+  }
+  .bbs-data-export {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .bbs-data-export .bbs-btn {
+    justify-content: center;
+    width: 100%;
   }
 }
 </style>

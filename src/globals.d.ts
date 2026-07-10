@@ -1,6 +1,12 @@
-// ST 在全局挂载了 jQuery,这里给个最小声明,避免 tsc 报错。
-// 后续若需要更完整的类型,可引入 @types/jquery。
-declare const $: any;
-declare const _: any;
-declare const toastr: any;
-declare const __BBS_VERSION__: string;
+import type { STBaiBaiBookApi } from '@/public/types';
+
+declare global {
+  // ST 在全局挂载了这些依赖,这里只声明插件实际使用到的最小类型。
+  const $: any;
+  const _: any;
+  const toastr: any;
+  const __BBS_VERSION__: string;
+  var STBaiBaiBook: STBaiBaiBookApi | undefined;
+}
+
+export {};

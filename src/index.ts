@@ -11,6 +11,7 @@ import { injectMenuButton } from '@/menu';
 import { syncTopBarButton } from '@/topbar';
 import { syncQuickReplyButton } from '@/quickReply';
 import { bindFloorPanel } from '@/floorPanel';
+import { registerPublicInterface } from '@/public/register';
 import { ui } from '@/state/ui';
 import { versionedAssetUrl } from '@/version';
 import { watch } from 'vue';
@@ -130,6 +131,8 @@ function bindMemoryWhenReady(attempt = 0) {
       // 设置先 hydrate:从 extension_settings 载入(或从旧 localStorage 迁移),之后才跨设备同步
       hydrateSettings();
       bindChatLifecycle();
+      // 公共读取接口不依赖记忆引擎开关；聊天载入后立即暴露，供其它插件/脚本读取。
+      void registerPublicInterface();
       bindEngine();
       // 时间标签:按开关注册/移除 ST 隐藏正则(幂等;开关变化的后续同步在 bindEngine 的 watch 里)
       syncTimeTagRegex();

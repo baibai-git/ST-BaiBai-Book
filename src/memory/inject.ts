@@ -228,7 +228,7 @@ function nodeRangeWithRelative(n: ViewNode, now: string): string {
 }
 
 /**
- * 主对话注入专用:为历史节点补相对时间,帮主模型感知剧情距离。
+ * 主对话注入/公开历史宏使用:为历史节点补相对时间,帮模型感知剧情距离。
  * 参照点 now = 故事内最新时间;无法解析相对差的(架空纪年等)降级为只显示绝对时间。
  * 不并入 renderHistoryNodes —— 后者被摘要模型等副任务复用,截止点和参照点不同。
  *
@@ -236,7 +236,7 @@ function nodeRangeWithRelative(n: ViewNode, now: string): string {
  * 总结跨多楼,按起止端分别标注为【起始(相对) - 结束(相对)】,避免用单个相对时间误代表整段。
  * 周几与相对时间并入同一个括号;仅标准公历带年份才有周几(weekdayLabel 自带门槛)。
  */
-function renderHistoryNodesWithRelative(nodes: ViewNode[], now: string): string {
+export function renderHistoryNodesWithRelative(nodes: ViewNode[], now: string): string {
   return nodes
     .map(n => {
       if (n.kind === 'comp') {

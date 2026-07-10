@@ -66,6 +66,12 @@ https://github.com/baibai-git/ST-BaiBai-Book
 
 ---
 
+## 插件开发者
+
+柏宝书提供只读 JavaScript API、`/bbs-get` STscript 指令和 ST 宏。接入方式与数据结构见 [PUBLIC_API.md](./PUBLIC_API.md)。
+
+---
+
 作者：柏柏 · 欢迎反馈与建议。
 </content>
 </invoke>
