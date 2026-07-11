@@ -1070,6 +1070,7 @@ function applyStoredDeltaTo(mem: BaibaiMemory, d: StoredDelta, leaf: { id: strin
   }
 
   // NPC(指令型:add 新登场 / update 改身份位置 / remove 退场)。施加序:add → update → remove。
+  // update 对不存在的名字按 upsert 创建,兼容迁移后名册为空、但后续摘要误产 update 的历史数据。
   if (d.npcs) {
     for (const add of d.npcs.add ?? []) {
       if (!add?.name?.trim()) continue;
@@ -1103,8 +1104,21 @@ function applyStoredDeltaTo(mem: BaibaiMemory, d: StoredDelta, leaf: { id: strin
     }
     for (const upd of d.npcs.update ?? []) {
       if (!upd?.name?.trim()) continue;
-      const n = mem.npcs.find(x => x.id === npcId(upd.name));
-      if (!n) continue; // 容错:更新不存在的 NPC 则忽略
+      const id = npcId(upd.name);
+      let n = mem.npcs.find(x => x.id === id);
+      if (!n) {
+        n = {
+          id,
+          name: upd.name.trim(),
+          gender: upd.gender?.trim() || undefined,
+          title: upd.title?.trim() || undefined,
+          desc: upd.desc?.trim() || undefined,
+          personality: upd.personality?.trim() || undefined,
+          createdAt: t,
+          updatedAt: t,
+        };
+        mem.npcs.push(n);
+      }
       if (upd.gender) n.gender = upd.gender.trim();
       if (upd.title) n.title = upd.title.trim();
       if (upd.desc) n.desc = upd.desc.trim();
