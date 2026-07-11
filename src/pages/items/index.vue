@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue';
 import ModalMask from '@/components/ModalMask.vue';
+import SummaryOnlyNotice from '@/components/SummaryOnlyNotice.vue';
 import { appendOpToLatestLeaf, editItem } from '@/memory/apply';
 import { derivedMeta, memory } from '@/memory/store';
 import { computed, ref } from 'vue';
@@ -72,6 +73,7 @@ function saveEdit() {
 <template>
   <section class="bbs-page">
     <h2 class="bbs-title bbs-title-sub">物品</h2>
+    <SummaryOnlyNotice subject="物品清单与变动" />
 
     <div class="bbs-additem">
       <input

@@ -161,6 +161,11 @@ export interface ApiSettings {
   assignments: Record<TaskType, string>;
   /** 自动摘要开关。开启即一并启用:自动隐藏、正文时间标签、积压拦截(不再各自独立开关)。 */
   autoSummaryEnabled: boolean;
+  /**
+   * 仅摘要模式。继续分析、保存结构化状态,但不向主模型注入当前状态,
+   * 也不再把物品/变量变动旁注写回正文。已有正文旁注不主动清理。
+   */
+  summaryOnlyMode: boolean;
   /** 保留最近 N 条 AI 消息发全文(滑动窗口);更早的自动摘要并隐藏 */
   keepRecent: number;
   /** 排除的角色名:这些名字(含重名卡)的聊天里,记忆系统所有功能都不生效 */
@@ -273,6 +278,7 @@ function defaults(): ApiSettings {
     channels: [],
     assignments: { summary: '', resummary: '' },
     autoSummaryEnabled: true,
+    summaryOnlyMode: false,
     keepRecent: 3,
     excludedChars: [],
     excludedWorldNames: [],
@@ -501,6 +507,7 @@ function applyInto(target: ApiSettings, src: ApiSettings): void {
   target.channels = src.channels;
   target.assignments = src.assignments;
   target.autoSummaryEnabled = src.autoSummaryEnabled;
+  target.summaryOnlyMode = src.summaryOnlyMode;
   target.keepRecent = src.keepRecent;
   target.excludedChars = src.excludedChars;
   target.excludedWorldNames = src.excludedWorldNames;

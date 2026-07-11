@@ -1011,14 +1011,16 @@ function applyLeafForFloor(
   if (replaceLeaf) invalidateSummaryAncestors(replaceLeaf.id);
   chat[aiFloor].extra = { ...(chat[aiFloor].extra ?? {}), bbs_leaf: leaf };
 
-  // 把本楼物品净变动写进正文 </bbs_end> 之后(<bbs_items> 旁注,正则隐藏、不进副API摘要)。
-  // 用 stateBefore.items(本楼之前的物品)作基准算 from→to;无变动则只清旧块。
-  const changes = itemChangesOf(storedDelta, stateBefore.items, timeEnd || timeStart || '');
-  let mes = writeItemLogTag(chat[aiFloor].mes, fmtItemLogInline(changes));
-  // 自定义变量净变动同样写进正文 <bbs_vars>(紧随物品块,正则隐藏、不进副API摘要),
-  // 让窗口内全文楼层的主模型看到「本楼已改过这些变量」,防重复改(与物品旁注同机制)。
-  mes = writeVarLogTag(mes, fmtVarOpsInline(storedDelta.varOps));
-  setMessageText(chat[aiFloor], mes);
+  if (!apiSettings.summaryOnlyMode) {
+    // 把本楼物品净变动写进正文 </bbs_end> 之后(<bbs_items> 旁注,正则隐藏、不进副API摘要)。
+    // 用 stateBefore.items(本楼之前的物品)作基准算 from→to;无变动则只清旧块。
+    const changes = itemChangesOf(storedDelta, stateBefore.items, timeEnd || timeStart || '');
+    let mes = writeItemLogTag(chat[aiFloor].mes, fmtItemLogInline(changes));
+    // 自定义变量净变动同样写进正文 <bbs_vars>(紧随物品块,正则隐藏、不进副API摘要),
+    // 让窗口内全文楼层的主模型看到「本楼已改过这些变量」,防重复改(与物品旁注同机制)。
+    mes = writeVarLogTag(mes, fmtVarOpsInline(storedDelta.varOps));
+    setMessageText(chat[aiFloor], mes);
+  }
 }
 
 /**
@@ -1806,5 +1808,11 @@ export function bindEngine(): void {
       syncTimeTagRegex();
       refreshInjection();
     },
+  );
+
+  // 仅摘要模式切换后立即刷新持久化的 ST 提示槽;正文中的既有旁注不主动清理。
+  watch(
+    () => apiSettings.summaryOnlyMode,
+    () => refreshInjection(),
   );
 }

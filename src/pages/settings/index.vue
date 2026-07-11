@@ -915,6 +915,11 @@ function exportPublicApiDocument() {
           <input v-model="apiSettings.autoSummaryEnabled" type="checkbox" class="bbs-checkbox" />
         </label>
         <p class="bbs-field-hint">开启后自动摘要并隐藏旧楼,同时启用正文时间标签(剧情时间锚点)与积压拦截(漏摘时拦截发送、提示补摘)。</p>
+        <label class="bbs-switch-row">
+          <span class="bbs-field-label">仅注入剧情摘要</span>
+          <input v-model="apiSettings.summaryOnlyMode" type="checkbox" class="bbs-checkbox" />
+        </label>
+        <p class="bbs-field-hint">兼容角色卡自带的变量系统。开启后仍会分析、保存并在柏宝书内展示物品、角色、场景、计划和变量,但不再把当前状态注入主模型,也不再向后续楼层正文写入物品/变量变动旁注。已有楼层中的旁注不会主动清理;场景页的「前往」功能不受影响。</p>
         <label class="bbs-num-row">
           <span class="bbs-field-label">字数档位</span>
           <select v-model="apiSettings.verbosity" class="bbs-input bbs-select bbs-select-narrow">

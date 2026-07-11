@@ -391,6 +391,9 @@ const RE_END_CLOSE_G = new RegExp(`</${END_TAG}>`, 'gi');
  * 返回处理后的正文(调用方负责写回 mes)。
  */
 export function writeItemLogTag(mes: string, inline: string): string {
+  // 仅摘要模式不碰正文:既不新增旁注,也不主动清理已有楼层中的旧旁注。
+  if (apiSettings.summaryOnlyMode) return mes;
+
   let s = stripManagedTag(mes, ITEMS_TAG);
   const text = inline.trim();
   if (!text) return s;
@@ -417,6 +420,9 @@ export function readItemsTagText(mes: string): string | null {
  * inline 为空 → 只清旧块不写新块。返回处理后的正文。
  */
 export function writeVarLogTag(mes: string, inline: string): string {
+  // 与物品旁注同口径,所有自动摘要、重摘和楼内编辑路径统一停止写回。
+  if (apiSettings.summaryOnlyMode) return mes;
+
   const s = stripManagedTag(mes, VARS_TAG);
   const text = inline.trim();
   if (!text) return s;

@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { apiSettings } from '@/api/settings';
 import Icon from '@/components/Icon.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import ModalMask from '@/components/ModalMask.vue';
+import SummaryOnlyNotice from '@/components/SummaryOnlyNotice.vue';
 import { classifyNpcPresence, editNpc, removeNpc, setNpcFollow, setNpcImportant, setProtagonist, upsertNpc } from '@/memory/apply';
 import { derivedMeta, memory } from '@/memory/store';
 import type { MemNpc } from '@/memory/types';
@@ -211,13 +213,16 @@ function confirmRemove() {
         <Icon name="plus" />
       </button>
     </div>
+    <SummaryOnlyNotice subject="主角档案、NPC 名册与角色状态" />
 
     <hr class="bbs-rule" />
 
     <div class="bbs-protagonist-section">
       <div class="bbs-npc-grouphead">
         <span class="bbs-npc-grouptag is-protagonist"><Icon name="characters" />主角</span>
-        <span class="bbs-npc-grouphint">始终完整发送,与 NPC 名册分开记录</span>
+        <span class="bbs-npc-grouphint" :class="{ 'is-local-only': apiSettings.summaryOnlyMode }">
+          {{ apiSettings.summaryOnlyMode ? '仅供柏宝书记录，不发送给主对话 AI' : '始终完整发送,与 NPC 名册分开记录' }}
+        </span>
       </div>
       <article class="bbs-npc bbs-protagonist">
         <div class="bbs-npc-body">
@@ -252,7 +257,9 @@ function confirmRemove() {
       <div v-if="mains.length" class="bbs-npc-group">
         <div class="bbs-npc-grouphead">
           <span class="bbs-npc-grouptag is-main"><Icon name="star" />主要角色</span>
-          <span class="bbs-npc-grouphint">始终随剧情发送,重点维护当前状态</span>
+          <span class="bbs-npc-grouphint" :class="{ 'is-local-only': apiSettings.summaryOnlyMode }">
+            {{ apiSettings.summaryOnlyMode ? '仍会重点维护状态，但不发送给主对话 AI' : '始终随剧情发送,重点维护当前状态' }}
+          </span>
         </div>
         <div class="bbs-npc-list">
           <article v-for="n in mains" :key="n.id" class="bbs-npc is-present is-main">
@@ -284,7 +291,9 @@ function confirmRemove() {
       <div v-if="present.length" class="bbs-npc-group">
         <div class="bbs-npc-grouphead">
           <span class="bbs-npc-grouptag is-present">在场</span>
-          <span class="bbs-npc-grouphint">完整信息随剧情发送</span>
+          <span class="bbs-npc-grouphint" :class="{ 'is-local-only': apiSettings.summaryOnlyMode }">
+            {{ apiSettings.summaryOnlyMode ? '仍按在场状态完整记录，但不发送给主对话 AI' : '完整信息随剧情发送' }}
+          </span>
         </div>
         <div class="bbs-npc-list">
           <article v-for="n in present" :key="n.id" class="bbs-npc is-present" :class="{ 'is-follow': n.follow }">
@@ -298,7 +307,7 @@ function confirmRemove() {
                   <button
                     class="bbs-item-act bbs-npc-star"
                     type="button"
-                    title="标记为主要角色(始终全量发送、追踪状态)"
+                    :title="apiSettings.summaryOnlyMode ? '标记为主要角色(仅调整柏宝书内的角色分组)' : '标记为主要角色(始终全量发送、追踪状态)'"
                     @click="toggleImportant(n)"
                   >
                     <Icon name="star" />
@@ -332,7 +341,9 @@ function confirmRemove() {
       <div v-if="nearby.length" class="bbs-npc-group">
         <div class="bbs-npc-grouphead">
           <span class="bbs-npc-grouptag is-nearby">同区域</span>
-          <span class="bbs-npc-grouphint">在附近,发送名字、身份与性格</span>
+          <span class="bbs-npc-grouphint" :class="{ 'is-local-only': apiSettings.summaryOnlyMode }">
+            {{ apiSettings.summaryOnlyMode ? '仍按同区域分档记录，但不发送给主对话 AI' : '在附近,发送名字、身份与性格' }}
+          </span>
         </div>
         <div class="bbs-npc-list">
           <article v-for="n in nearby" :key="n.id" class="bbs-npc is-nearby">
@@ -345,7 +356,7 @@ function confirmRemove() {
                   <button
                     class="bbs-item-act bbs-npc-star"
                     type="button"
-                    title="标记为主要角色(始终全量发送、追踪状态)"
+                    :title="apiSettings.summaryOnlyMode ? '标记为主要角色(仅调整柏宝书内的角色分组)' : '标记为主要角色(始终全量发送、追踪状态)'"
                     @click="toggleImportant(n)"
                   >
                     <Icon name="star" />
@@ -375,7 +386,9 @@ function confirmRemove() {
       <div v-if="absent.length" class="bbs-npc-group">
         <div class="bbs-npc-grouphead">
           <span class="bbs-npc-grouptag">不在场</span>
-          <span class="bbs-npc-grouphint">仅发送名字与身份,省 token</span>
+          <span class="bbs-npc-grouphint" :class="{ 'is-local-only': apiSettings.summaryOnlyMode }">
+            {{ apiSettings.summaryOnlyMode ? '仍保留名册分档，但不发送给主对话 AI' : '仅发送名字与身份,省 token' }}
+          </span>
         </div>
         <div class="bbs-npc-list">
           <article v-for="n in absent" :key="n.id" class="bbs-npc is-absent">
@@ -389,7 +402,7 @@ function confirmRemove() {
                   <button
                     class="bbs-item-act bbs-npc-star"
                     type="button"
-                    title="标记为主要角色(始终全量发送、追踪状态)"
+                    :title="apiSettings.summaryOnlyMode ? '标记为主要角色(仅调整柏宝书内的角色分组)' : '标记为主要角色(始终全量发送、追踪状态)'"
                     @click="toggleImportant(n)"
                   >
                     <Icon name="star" />
@@ -490,7 +503,9 @@ function confirmRemove() {
         </label>
         <label class="bbs-modal-field bbs-modal-check">
           <input v-model="draft.important" type="checkbox" class="bbs-checkbox" />
-          <span class="bbs-modal-label">主要角色(核心主演,始终全量发送、重点追踪状态)</span>
+          <span class="bbs-modal-label">
+            {{ apiSettings.summaryOnlyMode ? '主要角色(核心主演,仅在柏宝书内重点追踪状态)' : '主要角色(核心主演,始终全量发送、重点追踪状态)' }}
+          </span>
         </label>
         <label class="bbs-modal-field bbs-modal-check">
           <input v-model="draft.follow" type="checkbox" class="bbs-checkbox" />
@@ -544,7 +559,9 @@ function confirmRemove() {
         </label>
         <label class="bbs-modal-field bbs-modal-check">
           <input v-model="editing.important" type="checkbox" class="bbs-checkbox" />
-          <span class="bbs-modal-label">主要角色(核心主演,始终全量发送、重点追踪状态)</span>
+          <span class="bbs-modal-label">
+            {{ apiSettings.summaryOnlyMode ? '主要角色(核心主演,仅在柏宝书内重点追踪状态)' : '主要角色(核心主演,始终全量发送、重点追踪状态)' }}
+          </span>
         </label>
         <label class="bbs-modal-field bbs-modal-check">
           <input v-model="editing.follow" type="checkbox" class="bbs-checkbox" />
@@ -643,6 +660,10 @@ function confirmRemove() {
 .bbs-npc-grouphint {
   font-size: 11.5px;
   color: var(--bbs-ink-muted);
+}
+.bbs-npc-grouphint.is-local-only {
+  color: var(--bbs-warning);
+  font-weight: 600;
 }
 
 .bbs-npc-list {

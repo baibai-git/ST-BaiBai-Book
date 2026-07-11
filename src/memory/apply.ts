@@ -1,3 +1,4 @@
+import { apiSettings } from '@/api/settings';
 import { getContext, setMessageText, type STMessage } from '@/st/context';
 import { fmtItemLogInline } from './prompts';
 import { memory, recomputeDerived, saveMemory, scheduleLeafFlush } from './store';
@@ -1303,8 +1304,10 @@ export function syncItemLogFromMessage(index: number): boolean {
   chat[index].extra = { ...(chat[index].extra ?? {}), bbs_leaf: leaf };
 
   // 正文旁注重写成规范格式(用规范化后的 delta 重新渲染)
-  const canonical = fmtItemLogInline(itemChangesOf(leaf.delta, prior, time));
-  setMessageText(chat[index], writeItemLogTag(chat[index].mes, canonical));
+  if (!apiSettings.summaryOnlyMode) {
+    const canonical = fmtItemLogInline(itemChangesOf(leaf.delta, prior, time));
+    setMessageText(chat[index], writeItemLogTag(chat[index].mes, canonical));
+  }
 
   recomputeDerived();
   pruneBrokenComps();
@@ -1840,6 +1843,8 @@ export function editLeafFull(
  * 基准物品状态 = 本楼之前(deriveMemory 到 index,不含本楼),与摘要落叶时一致。
  */
 function rewriteFloorTags(chat: STMessage[], index: number, delta: StoredDelta): void {
+  if (apiSettings.summaryOnlyMode) return;
+
   const leaf = getLeaf(chat[index]);
   const time = optText(leaf?.timeEnd) || optText(leaf?.timeStart) || '';
   const priorItems = deriveMemory(chat, index).items;

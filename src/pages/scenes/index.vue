@@ -2,6 +2,7 @@
 import Icon from '@/components/Icon.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import ModalMask from '@/components/ModalMask.vue';
+import SummaryOnlyNotice from '@/components/SummaryOnlyNotice.vue';
 import { buildSceneLocationIndex, editSceneDesc, findCurrentSceneId, removeScene, reparentScene, resolveSceneLocationId, upsertScene } from '@/memory/apply';
 import { buildTravelDraft } from '@/memory/inject';
 import { derivedMeta, memory } from '@/memory/store';
@@ -295,6 +296,7 @@ function confirmTravel() {
         <Icon name="plus" />
       </button>
     </div>
+    <SummaryOnlyNotice subject="地点、场景层级与当前位置" />
 
     <hr class="bbs-rule" />
 

@@ -498,6 +498,9 @@ export function buildTravelDraft(target: MemScene): string {
 
 /** 组合当前结构化状态注入文本;无有意义状态时返回空串。 */
 export function buildStateInjectionText(): string {
+  // 仅摘要模式保留内部状态供副 API、页面和公开查询使用,主模型只接收剧情摘要。
+  if (apiSettings.summaryOnlyMode) return '';
+
   const st: string[] = [];
   if (memory.state.time) {
     // 周几只在标准公历带年份时有(weekdayLabel 自带门槛),古风/架空时间不标
