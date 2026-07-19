@@ -242,7 +242,7 @@ const PROMPT_METAS: PromptMeta[] = [
   {
     key: 'resummary2',
     label: '二次总结提示词',
-    hint: '把多条总结再压一层(L1+ → 更上层)。目标字数按输入规模动态放宽({{target}}),少丢信息。',
+    hint: '把多条总结再压一层(L1+ → 更上层)。动态字数区间:详细为输入的 40%–50%,精简为 30%–40%。',
     builtin: RESUMMARY2_PROMPT,
     macros: RESUMMARY2_MACROS,
   },
