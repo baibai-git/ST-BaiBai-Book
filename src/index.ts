@@ -13,6 +13,7 @@ import { syncQuickReplyButton } from '@/quickReply';
 import { bindFloorPanel } from '@/floorPanel';
 import { registerPublicInterface } from '@/public/register';
 import { ui } from '@/state/ui';
+import { guardEditableArrowKeys } from '@/st/keyboard';
 import { versionedAssetUrl } from '@/version';
 import { watch } from 'vue';
 // 这两行让 Vite 把全局样式打进 dist/index.css(随后注入 shadow root)
@@ -86,6 +87,7 @@ function mount() {
 
   const shadow = host.shadowRoot ?? host.attachShadow({ mode: 'open' });
   shadow.textContent = '';
+  guardEditableArrowKeys(shadow);
 
   // 把我们构建出的 dist/index.css 以 <link> 注入 shadow root——
   // 这样样式只在这棵 shadow 树内生效,ST 全局样式进不来,我们的也出不去。

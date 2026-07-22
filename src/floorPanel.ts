@@ -12,6 +12,7 @@
 import { createApp, reactive, type App } from 'vue';
 import FloorPanel from '@/components/FloorPanel.vue';
 import { getContext } from '@/st/context';
+import { guardEditableArrowKeys } from '@/st/keyboard';
 import { isRealAiReply } from '@/memory/engine';
 import { apiSettings, engineActiveHere } from '@/api/settings';
 import { watch } from 'vue';
@@ -118,6 +119,7 @@ function injectFloor(idx: number): void {
   host.className = HOST_CLASS;
   host.setAttribute('data-bbs-fp-floor', String(idx));
   const root = host.attachShadow({ mode: 'open' });
+  guardEditableArrowKeys(root);
   attachStyles(root);
   const container = document.createElement('div');
   root.appendChild(container);
