@@ -75,12 +75,18 @@ export function currentSummaryPromise(): Promise<void> | null {
   return currentRun;
 }
 
+/** 渲染选项:includeUser=false 时跳过 user 楼层(是否排除由调用方按设置决定,渲染函数保持通用) */
+interface RenderMessagesOptions {
+  includeUser?: boolean;
+}
+
 /** 把消息渲染成给摘要模型的文本(cleanBody:裁正文段 + 整块删噪声标签 + 时间标签转文本) */
-function renderMessages(chat: STMessage[], indices: number[], name1: string, name2: string): string {
+function renderMessages(chat: STMessage[], indices: number[], name1: string, name2: string, opts: RenderMessagesOptions = {}): string {
   return indices
     .map(i => {
       const m = chat[i];
       if (!m) return '';
+      if (opts.includeUser === false && m.is_user) return ''; // 排除 user 输入,只总结 AI 输出
       // 双标:既标发言方(用户/角色),又带人名 —— 摘要正文用人名,群聊也能区分谁说的
       const tag = m.is_user ? '用户' : '角色';
       const who = m.is_user ? name1 || 'User' : m.name || name2 || 'Char';
@@ -1073,7 +1079,8 @@ async function summarizeFloorWork(
 
   const covered = options.replaceLeaf ? coveredBeforeFloor(chat, aiFloor) : coveredSet(chat);
   const targets = floorTargets(chat, aiFloor, covered);
-  const content = renderMessages(chat, targets, ctx.name1, ctx.name2);
+  // 是否带 user 楼层由设置决定(renderMessages 保持通用,策略在调用方)
+  const content = renderMessages(chat, targets, ctx.name1, ctx.name2, { includeUser: !apiSettings.excludeUserFloors });
 
   // 两端标签齐才算「有标签」,提示词据此免去 AI 算时间。
   const tag = parseTimeRange(clampToTimeTags(chat[aiFloor].mes));
@@ -1251,7 +1258,7 @@ async function summarizeBatchWork(
   block.forEach((f, idx) => {
     const targets = floorTargets(chat, f, covered);
     allTargets.push(...targets);
-    segments.push(`━━ 第 ${idx + 1} 楼 ━━\n${renderMessages(chat, targets, ctx.name1, ctx.name2)}`);
+    segments.push(`━━ 第 ${idx + 1} 楼 ━━\n${renderMessages(chat, targets, ctx.name1, ctx.name2, { includeUser: !apiSettings.excludeUserFloors })}`);
   });
   const content = segments.join('\n\n');
 
