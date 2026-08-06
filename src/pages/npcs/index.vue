@@ -811,26 +811,33 @@ function confirmRemove() {
   flex-direction: column;
   gap: 4px;
 }
-/* 头行:名字 + 一枚状态标(随行/所在地)+ 操作区。名字占自然宽,状态标吃剩余宽并截断,
-   操作区固定不被挤。身份不在这行——长身份单独成段,不再挤乱头行。 */
+/* 头行:名字 + 性别 + 一枚状态标(随行/所在地)+ 操作区。名字/性别过长时可收缩并省略,
+   不让操作区被顶出卡片右缘(手机上会点不到);身份不在这行——长身份单独成段,不再挤乱头行。 */
 .bbs-npc-head {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 .bbs-npc-name {
   font-size: 14px;
   font-weight: 600;
   color: var(--bbs-ink);
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-/* 性别小标签:紧凑灰色括注,跟在名字后面 */
+/* 性别小标签:紧凑灰色括注,跟在名字后面;过长同样收缩省略 */
 .bbs-npc-gender {
   font-size: 11px;
   color: var(--bbs-ink-muted);
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .bbs-npc-acts {
   flex-shrink: 0;

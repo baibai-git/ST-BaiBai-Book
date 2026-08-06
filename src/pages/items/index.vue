@@ -195,8 +195,11 @@ function saveEdit() {
   font-size: 14px;
   font-weight: 500;
   color: var(--bbs-ink);
-  flex: 0 0 auto; /* 占自然宽度,不收缩不省略;数量紧贴其后 */
+  flex: 0 1 auto; /* 占自然宽度,过长时收缩省略,不盖住数量/位置/操作按钮 */
+  min-width: 0;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .bbs-item-qty {
   font-size: 12px;
