@@ -924,7 +924,6 @@ function exportPublicApiDocument() {
           <input v-model="apiSettings.summaryOnlyMode" type="checkbox" class="bbs-checkbox" />
         </label>
         <p class="bbs-field-hint">兼容角色卡自带的变量系统。开启后仍会分析、保存并在柏宝书内展示物品、角色、场景、计划和变量,但不再把当前状态注入主模型,也不再向后续楼层正文写入物品/变量变动旁注。已有楼层中的旁注不会主动清理;场景页的「前往」功能不受影响。</p>
-<<<<<<< HEAD
           <label class="bbs-switch-row">
             <span class="bbs-field-label">记录主角生活细节</span>
             <input v-model="apiSettings.lifeDetailsEnabled" type="checkbox" class="bbs-checkbox" />
@@ -935,13 +934,6 @@ function exportPublicApiDocument() {
             <input v-model="apiSettings.excludeUserFloors" type="checkbox" class="bbs-checkbox" />
           </label>
           <p class="bbs-field-hint">开启后喂给摘要/总结模型的内容只包含 AI 输出(AI 楼层),排除你的输入(user 楼层)。user 楼层仍参与覆盖窗口、状态派生与世界书关键词激活,只是不进入摘要正文。</p>
-=======
-        <label class="bbs-switch-row">
-          <span class="bbs-field-label">只总结 AI 输出</span>
-          <input v-model="apiSettings.excludeUserFloors" type="checkbox" class="bbs-checkbox" />
-        </label>
-        <p class="bbs-field-hint">开启后喂给摘要/总结模型的内容只包含 AI 输出(AI 楼层),排除你的输入(user 楼层)。user 楼层仍参与覆盖窗口、状态派生与世界书关键词激活,只是不进入摘要正文。</p>
->>>>>>> 98a8042 (设置文案改为「只总结 AI 输出」)
         <label class="bbs-num-row">
           <span class="bbs-field-label">字数档位</span>
           <select v-model="apiSettings.verbosity" class="bbs-input bbs-select bbs-select-narrow">
