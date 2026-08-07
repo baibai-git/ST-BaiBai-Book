@@ -171,6 +171,9 @@ export interface ApiSettings {
   summaryOnlyMode: boolean;
   /** 生活小档案开关。关闭后:不再提示副 API 记录、已记录的不再注入主模型(数据保留,可随时重开)。 */
   lifeDetailsEnabled: boolean;
+  /** 摘要/总结时排除 user 楼层:喂给摘要模型的正文只含 AI 输出。
+   *  user 楼层仍参与覆盖窗口、状态派生与世界书关键词激活,只是不进摘要正文。 */
+  excludeUserFloors: boolean;
   /** 保留最近 N 条 AI 消息发全文(滑动窗口);更早的自动摘要并隐藏 */
   keepRecent: number;
   /** 排除的角色名:这些名字(含重名卡)的聊天里,记忆系统所有功能都不生效 */
@@ -295,8 +298,9 @@ function defaults(): ApiSettings {
     channels: [],
     assignments: { summary: '', resummary: '' },
     autoSummaryEnabled: true,
-    summaryOnlyMode: false,
-    lifeDetailsEnabled: true,
+      summaryOnlyMode: false,
+      lifeDetailsEnabled: true,
+      excludeUserFloors: true,
     keepRecent: 3,
     excludedChars: [],
     excludedWorldNames: [],
@@ -365,6 +369,8 @@ function normalize(raw: unknown): ApiSettings {
   // 渲染世界书模板:布尔,缺失(老数据无此键)回退 true(默认开,让动态世界书条目拿到成品)
   merged.renderWorldInfoTemplates =
     typeof merged.renderWorldInfoTemplates === 'boolean' ? merged.renderWorldInfoTemplates : true;
+  // 摘要排除 user 楼层:布尔,缺失/非法回退 true(默认只总结 AI 输出)
+  merged.excludeUserFloors = typeof merged.excludeUserFloors === 'boolean' ? merged.excludeUserFloors : true;
   // vector 同为嵌套对象(且内含子对象),逐层兜底,老数据缺字段时回退默认。
   // 注:旧结构曾有 vector.channels + {channel,model};扁平化后弃用,逐角色按 url/key/model 兜底,
   // 老数据缺这些字段会回退空串(等于「未配置」,用户重填一次即可)。
@@ -537,6 +543,7 @@ function applyInto(target: ApiSettings, src: ApiSettings): void {
   target.assignments = src.assignments;
   target.autoSummaryEnabled = src.autoSummaryEnabled;
   target.summaryOnlyMode = src.summaryOnlyMode;
+  target.excludeUserFloors = src.excludeUserFloors;
   target.keepRecent = src.keepRecent;
   target.excludedChars = src.excludedChars;
   target.excludedWorldNames = src.excludedWorldNames;
