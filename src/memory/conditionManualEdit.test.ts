@@ -4,7 +4,7 @@ import * as settings from '@/api/settings';
 import * as context from '@/st/context';
 import type { STContext, STMessage } from '@/st/context';
 import * as notices from '@/st/toast';
-import { deriveMemory, editNpc, editPlan, getLeaf, setProtagonist } from './apply';
+import { deriveMemory, editNpc, editPlan, editSceneDesc, finalizeDelta, getLeaf, reparentScene, setProtagonist } from './apply';
 import { memory, recomputeDerived } from './store';
 import { createEmptyMemory, type StoredDelta } from './types';
 
@@ -72,6 +72,54 @@ describe('NPC 即时层支持手动清空', () => {
     expect(editNpc('艾琳', { condition: '', outfit: '' })).toBe(true);
     expect(memory.npcs[0].condition).toBeUndefined();
     expect(memory.npcs[0].outfit).toBeUndefined();
+  });
+});
+
+describe('NPC 档案层空字符串=清除', () => {
+  const ARCHIVE = { gender: '女', age: '19', relation: '林舟的师姐', ties: '与店主是旧识', title: '旅店掌柜', desc: '银发及腰', personality: '爱逞强' };
+
+  it('AI 用空串清掉错填的外貌/关系/身份;没教清除的性别给空串只当占位', () => {
+    const clear = finalizeDelta({ npcs: { update: [{ name: '艾琳', desc: '', relation: '', title: '', gender: '' }] } }, []);
+    const npc = deriveMemory([
+      message({ npcs: { add: [{ name: '艾琳', ...ARCHIVE }] } }),
+      message(JSON.parse(JSON.stringify(clear))),
+    ]).npcs[0];
+    expect(npc.desc).toBeUndefined();
+    expect(npc.relation).toBeUndefined();
+    expect(npc.title).toBeUndefined();
+    expect(npc.gender).toBe('女');
+  });
+
+  it('手动删空全部档案字段(含年龄)生效,重放同样生效', () => {
+    const ctx = useChat([message({ npcs: { add: [{ name: '艾琳', ...ARCHIVE }] } })]);
+    expect(editNpc('艾琳', { gender: '', age: '', relation: '', ties: '', title: '', desc: '', personality: '' })).toBe(true);
+    for (const npc of [memory.npcs[0], deriveMemory(ctx.chat).npcs[0]]) {
+      for (const key of ['gender', 'age', 'ageTime', 'relation', 'ties', 'title', 'desc', 'personality'] as const) {
+        expect(npc[key]).toBeUndefined();
+      }
+    }
+  });
+});
+
+describe('地点描述可手动清空', () => {
+  it('删空只清描述、节点保留;换上级时删空同样生效', () => {
+    const ctx = useChat([message({ scenes: { ops: [
+      { op: 'add', path: ['王都'], desc: '王国首都' },
+      { op: 'add', path: ['王都', '酒馆'], desc: '吵闹的小酒馆' },
+      { op: 'add', path: ['港口'], desc: '海边码头' },
+    ] } })]);
+    expect(editSceneDesc(['王都'], '')).toBe(true);
+    // 换上级时删空:清除与 reparent 同一批写入,不会移了树却没清成
+    expect(reparentScene(['王都', '酒馆'], ['港口', '酒馆'], { 酒馆: '' })).toBe(true);
+    expect(getLeaf(ctx.chat[0])!.delta.scenes!.ops!.slice(-2).map(o => o.op)).toEqual(['reparent', 'update']);
+    for (const scenes of [memory.scenes, deriveMemory(ctx.chat).scenes]) {
+      const capital = scenes.find(s => s.name === '王都');
+      const tavern = scenes.find(s => s.name === '酒馆');
+      expect(capital).toBeDefined();
+      expect(capital?.desc).toBeUndefined();
+      expect(tavern?.path).toEqual(['港口', '酒馆']);
+      expect(tavern?.desc).toBeUndefined();
+    }
   });
 });
 

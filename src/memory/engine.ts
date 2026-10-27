@@ -5,11 +5,11 @@ import type { TaskType } from '@/api/settings';
 import type { STMessage, WorldInfoEntry } from '@/st/context';
 import { getContext, getCheckWorldInfo, getEjsTemplate, setMessageText } from '@/st/context';
 import { toast } from '@/st/toast';
-import { addSummary, classifyNpcPresence, deriveMemory, finalizeDelta, fmtVarOpsInline, getLeaf, invalidateSummaryAncestors, itemChangesOf, leafValid, makeLeafId, pruneBrokenComps, syncItemLogFromMessage, type LocationEvidenceGuard } from './apply';
+import { addSummary, classifyNpcPresence, deriveMemory, finalizeDelta, fmtVarOpsInline, getLeaf, invalidateSummaryAncestors, itemChangesOf, leafValid, makeLeafId, pruneBrokenComps, syncItemLogFromMessage } from './apply';
 import { selectKnowledgeForSummary } from './knowledge';
 import { extractJsonObject } from './json';
 import { clearInjection, refreshInjection, renderHistoryNodes, selectHistoryNodesBefore } from './inject';
-import { buildBatchSummaryPrompt, buildBatchThinking, buildCharCardSystem, buildPersonaSystem, buildResummaryPrompt, buildSummaryPrompt, buildSummaryThinking, buildWorldInfoSystem, fmtItemLogInline, isBuiltinSummaryPrompt, JAILBREAK_PROMPT, RESUMMARY_THINKING_CHECKLIST, selectRecentResolvedPlans } from './prompts';
+import { buildBatchSummaryPrompt, buildBatchThinking, buildCharCardSystem, buildPersonaSystem, buildResummaryPrompt, buildSummaryPrompt, buildSummaryThinking, buildWorldInfoSystem, fmtItemLogInline, JAILBREAK_PROMPT, RESUMMARY_THINKING_CHECKLIST, selectRecentResolvedPlans } from './prompts';
 import { clampToTimeTags, cleanBody, parseTimeRange, syncTimeTagRegex, writeItemLogTag, writeVarLogTag } from './timeTag';
 import { renderSourceHints, type SourceExcerpt } from './sourceHints';
 import { memory, recomputeDerived, scheduleLeafFlush } from './store';
@@ -1072,7 +1072,6 @@ function applyLeafForFloor(
   delta: SummaryDelta,
   stateBefore: ReturnType<typeof deriveMemory>,
   replaceLeaf?: LeafExtra,
-  evidenceGuard?: LocationEvidenceGuard,
   knowledgeShown?: { id: string }[],
 ): void {
   if (!chat[aiFloor]) {
@@ -1088,7 +1087,7 @@ function applyLeafForFloor(
   const openPlansOrdered = stateBefore.plans.filter(p => p.status === 'open');
   // 生活小档案当前列表:顺序即提示词里的 d1/d2…,用于把 update/archive/remove 短序号翻译成稳定 id
   // 了解清单同理(k1/k2…);未传 knowledgeShown = 功能关闭,AI 输出的 knowledge 整段丢弃
-  const storedDelta = finalizeDelta(delta, openPlansOrdered, stateBefore.lifeDetails, evidenceGuard,
+  const storedDelta = finalizeDelta(delta, openPlansOrdered, stateBefore.lifeDetails,
     knowledgeShown && { shown: knowledgeShown, npcNames: stateBefore.npcs.map(n => n.name) });
 
   // 时间起止:标签优先(与新剧情同源不漂移);标签缺的那端用 AI 补的 timeStart/timeEnd 兜底。
@@ -1198,15 +1197,16 @@ async function summarizeFloorWork(
     varsRule: (['global', 'char', 'chat'] as const).map(t => memory.varTemplates[t].rule.trim()).filter(Boolean).join('\n\n'),
   });
 
-  const checklist = buildSummaryThinking(ctx.name1);
+  const checklist = buildSummaryThinking(ctx.name1, !!knowledgeShown);
   const messages: ChatMsg[] = [];
   const jb = apiSettings.prompts.jailbreak.trim() || JAILBREAK_PROMPT;
   if (jb) messages.push({ role: 'system', content: jb });
   if (charCard) messages.push({ role: 'system', content: buildCharCardSystem(charCard) });
   if (persona) messages.push({ role: 'system', content: buildPersonaSystem(persona) });
   if (worldInfo) messages.push({ role: 'system', content: buildWorldInfoSystem(worldInfo) });
+  // 自定义模板已自带全部补充段时 system 为空;空内容消息部分接口会拒收
+  if (prompt.system) messages.push({ role: 'system', content: prompt.system });
   messages.push(
-    { role: 'system', content: prompt.system },
     { role: 'user', content: prompt.user },
     { role: 'system', content: checklist },
   );
@@ -1221,7 +1221,7 @@ async function summarizeFloorWork(
     return { ...d, summary } as SummaryDelta & { summary: string };
   });
 
-  applyLeafForFloor(chat, aiFloor, delta, stateBefore, options.replaceLeaf, { content, enforce: isBuiltinSummaryPrompt() }, knowledgeShown);
+  applyLeafForFloor(chat, aiFloor, delta, stateBefore, options.replaceLeaf, knowledgeShown);
   engineState.lastRunAt = Date.now();
 
   // 立刻反映到派生与注入;落盘走防抖(隐藏由收尾的 syncWindowHiddenState 统一负责)
@@ -1620,8 +1620,9 @@ export async function checkResummary(): Promise<number> {
       const jb = apiSettings.prompts.jailbreak.trim() || JAILBREAK_PROMPT;
       const messages: ChatMsg[] = [];
       if (jb) messages.push({ role: 'system', content: jb });
+      // 自定义模板已自带全部补充段时 system 为空;空内容消息部分接口会拒收
+      if (prompt.system) messages.push({ role: 'system', content: prompt.system });
       messages.push(
-        { role: 'system', content: prompt.system },
         { role: 'user', content: prompt.user + hints },
         { role: 'system', content: RESUMMARY_THINKING_CHECKLIST },
       );
@@ -1781,8 +1782,9 @@ export async function summarizeSelected(nodeIds: string[]): Promise<{ made: numb
     const jb = apiSettings.prompts.jailbreak.trim() || JAILBREAK_PROMPT;
     const messages: ChatMsg[] = [];
     if (jb) messages.push({ role: 'system', content: jb });
+    // 同自动压缩:system 可能为空,空消息不发
+    if (prompt.system) messages.push({ role: 'system', content: prompt.system });
     messages.push(
-      { role: 'system', content: prompt.system },
       { role: 'user', content: prompt.user + hints },
       { role: 'system', content: RESUMMARY_THINKING_CHECKLIST },
     );

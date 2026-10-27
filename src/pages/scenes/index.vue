@@ -201,8 +201,8 @@ function closeComposer() {
 }
 function addScene() {
   const name = newName.value.trim();
-  // 描述必填:写不出描述的地点不记(与 AI 同规则)
-  if (!name || !newDesc.value.trim()) return;
+  // 描述可空:与 AI 同规则(建点宽、描述严),写不出描述也先把地点记下
+  if (!name) return;
   const parent = memory.scenes.find(s => s.id === newParentId.value);
   const path = parent ? [...parent.path, name] : [name];
   if (memory.scenes.some(s => s.id === sceneId(path))) {
@@ -250,7 +250,8 @@ const editParentOptions = computed(() => {
 function saveEdit() {
   const e = editing.value;
   const name = e?.name.trim();
-  if (!e || !name || !e.desc.trim()) return; // 描述必填
+  if (!e || !name) return;
+  const desc = e.desc.trim(); // 可空:删空=清除描述,节点保留
   const parent = memory.scenes.find(s => s.id === e.parentId);
   const newPath = parent ? [...parent.path, name] : [name];
   const pathChanged = sceneId(newPath) !== sceneId(e.path);
@@ -261,10 +262,10 @@ function saveEdit() {
       toast(`地点「${newPath.join(' › ')}」已经存在，不能覆盖或合并。`, 'warning');
       return;
     }
-    // 换父 / 改名 / 插层:一条 reparent 原子完成,连子树平移 + 顺带写新名描述
-    saved = reparentScene(e.path, newPath, { [name]: e.desc.trim() });
+    // 换父 / 改名 / 插层:一条 reparent 原子完成,连子树平移 + 顺带写新名描述(删空=清除原描述)
+    saved = reparentScene(e.path, newPath, { [name]: desc });
   } else {
-    saved = editSceneDesc(e.path, e.desc);
+    saved = editSceneDesc(e.path, desc);
   }
   if (!saved) {
     toast('无法保存地点，请确认当前聊天已有有效摘要。', 'error');
@@ -391,12 +392,12 @@ function confirmTravel() {
           <input ref="nameInput" v-model="newName" class="bbs-input" type="text" placeholder="新地点名" @keydown.enter="addScene" />
         </label>
         <label class="bbs-modal-field">
-          <span class="bbs-modal-label">描述(必填)</span>
+          <span class="bbs-modal-label">描述(可选)</span>
           <textarea v-model="newDesc" class="bbs-input bbs-modal-textarea" rows="3" placeholder="这地方是什么、有何特征"></textarea>
         </label>
         <footer class="bbs-modal-foot">
           <button class="bbs-btn" type="button" @click="closeComposer">取消</button>
-          <button class="bbs-btn bbs-btn-primary" type="button" :disabled="!newName.trim() || !newDesc.trim()" @click="addScene">添加</button>
+          <button class="bbs-btn bbs-btn-primary" type="button" :disabled="!newName.trim()" @click="addScene">添加</button>
         </footer>
       </div>
     </ModalMask>
@@ -418,12 +419,12 @@ function confirmTravel() {
           <BbsSelect v-model="editing.parentId" :options="parentOptions(editParentOptions)" aria-label="上级地点" />
         </div>
         <label class="bbs-modal-field">
-          <span class="bbs-modal-label">描述(必填)</span>
+          <span class="bbs-modal-label">描述(可选)</span>
           <textarea v-model="editing.desc" class="bbs-input bbs-modal-textarea" rows="3" placeholder="这地方是什么、有何特征"></textarea>
         </label>
         <footer class="bbs-modal-foot">
           <button class="bbs-btn" type="button" @click="cancelEdit">取消</button>
-          <button class="bbs-btn bbs-btn-primary" type="button" :disabled="!editing.name.trim() || !editing.desc.trim()" @click="saveEdit">保存</button>
+          <button class="bbs-btn bbs-btn-primary" type="button" :disabled="!editing.name.trim()" @click="saveEdit">保存</button>
         </footer>
       </div>
     </ModalMask>

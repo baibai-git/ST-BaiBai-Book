@@ -8,7 +8,7 @@ import { classifyNpcPresence, deriveMemory, editLeafFull, editNpc, finalizeDelta
 import { createNewChatWithCarryover } from './carryover';
 import { currentSummaryPromise, summarizeFloor } from './engine';
 import * as inject from './inject';
-import { affinityLevelFromInput, applyNpcAffinity, cleanNpcAffinityLevel, fmtNpcAffinity, fmtNpcSummaryList, NPC_AFFINITY_BRIEFING } from './npcRelations';
+import { affinityLevelFromInput, applyNpcAffinity, cleanNpcAffinityLevel, fmtNpcAffinity, fmtNpcSummaryList, NPC_AFFINITY_BRIEFING, NPC_AFFINITY_FIELDS } from './npcRelations';
 import { buildSummaryPrompt, RULE_NPC_AFFINITY } from './prompts';
 import { memory, recomputeDerived } from './store';
 import { createEmptyMemory, type NpcAffinity, type NpcDelta, type StoredDelta, type SummaryDelta } from './types';
@@ -267,6 +267,13 @@ describe('摘要与主对话的提示词边界', () => {
     }
     // 估计是过去的总结,不是上限:防止主模型把旧档位当禁令冻结关系发展
     expect(NPC_AFFINITY_BRIEFING).toContain('不是对本轮的上限或禁令');
+  });
+  it('规则里的档位文字与界面档位一致', () => {
+    // 好感规则截自 summary.txt,档位行写死在文件里;改了 NPC_AFFINITY_LABELS 须同步那里
+    for (const f of NPC_AFFINITY_FIELDS) {
+      const levels = f.options.filter(o => o.value !== '').map(o => `${o.value}=${o.label}`).join(';');
+      expect(RULE_NPC_AFFINITY).toContain(`${f.label}(${f.key}):${levels}`);
+    }
   });
   it('四档在场状态均注入独立好感,远处省略说明且守住角色视角', () => {
     const chat = [message({

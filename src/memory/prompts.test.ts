@@ -14,12 +14,16 @@ import {
   LEDGER_PROTOCOL,
   MEMORY_BRIEFING_END,
   MEMORY_BRIEFING_NOTE,
-  NPC_LOCATION_EVIDENCE_PROTOCOL,
   QUERY_REWRITE_SYSTEM,
   QUERY_REWRITE_TAIL,
   RESUMMARY_PROMPT,
   RESUMMARY2_PROMPT,
   RESUMMARY_THINKING_CHECKLIST,
+  RULE_ABSOLUTE_TIME_LANGUAGE,
+  RULE_NPC_AFFINITY,
+  RULE_PROTAGONIST,
+  RULE_RELATION_MOMENTUM,
+  RULE_SCENE_FOCUS,
   SUMMARY_MACROS,
   SUMMARY_OUTPUT_PROTOCOL,
   SUMMARY_PROMPT,
@@ -78,7 +82,7 @@ describe('new built-in prompts', () => {
     expect(system).toContain('【物品规则】(items 字段,严格筛选)');
     expect(system).toContain('【NPC 规则】(npcs 字段,极严筛选)');
     expect(system).toContain('【计划/悬念规则】(plans 字段)');
-    expect(system).toContain('【场景/地点规则】(scenes 字段,默认不记)');
+    expect(system).toContain('【场景/地点规则】(scenes 字段,只记到过的有名地点)');
     expect(system).toContain('【摘要成文顺序】');
     expect(system).toContain('【空间事实边界】');
     expect(system).toContain('【摘要时间语言铁律】');
@@ -86,7 +90,21 @@ describe('new built-in prompts', () => {
     // 伤情编号协议已停用:状态改回与着装相同的全文覆盖
     expect(system).not.toContain('【伤情局部更新协议】');
     expect(system).not.toContain('conditionPatch');
-    expect(NPC_LOCATION_EVIDENCE_PROTOCOL).toContain('locationEvidence');
+    // NPC 定位证据硬关卡已撤:引文对不上原文时会静默丢掉合法定位
+    expect(system).not.toContain('locationEvidence');
+    // 拆伤情补丁时漏删的残留:模型会去找已不存在的「局部协议」
+    expect(system).not.toContain('局部协议');
+    // qty 必填 + 数量不明不猜曾成死结,数不清的东西只能不记
+    expect(system).toContain('按包装记一份');
+    // 局势卡的氛围示范被删过,卡片退化成干巴巴的动作记录
+    expect(system).toContain('陪伴/日常剧情写互动氛围');
+    // 文风只有禁令、示范全是公文腔时,日常戏容易写成笔录或把互动删光
+    expect(system).toContain('(互动删光)');
+    // 氛围禁令写死过,原文明写的气氛也会被一并删掉
+    expect(system).toContain('原文明写的气氛可照原意保留');
+    // 填表样例曾要求「称谓+一句态度」,与规则打架,第一印象的态度会冻进只在质变时才改的 relation
+    expect(system).not.toContain('称谓在前+一句态度');
+    expect(system).toContain('不为凑格式补态度');
     expect(LEDGER_PROTOCOL).toContain('bbs_items');
   });
 
@@ -119,6 +137,8 @@ describe('new built-in prompts', () => {
       expect(prompt).toContain(verbosity === 'detailed' ? '360' : '180');
     }
     expect(SUMMARY_MACROS.map(m => m.token)).toContain('{{summary_max_chars}}');
+    // 字数区间容易被当成任务去凑;「宁可明显短于上限」故意不恢复,免得底层摘要越写越薄
+    expect(buildSummaryPrompt(args).system).toContain('没有最低篇幅任务');
   });
 
   it('keeps custom templates in user with the compatibility supplements in system', () => {
@@ -129,10 +149,66 @@ describe('new built-in prompts', () => {
     expect(parts.system).not.toContain('CUSTOM_PROFILE');
     expect(parts.system).not.toContain(args.content);
     expect(parts.system).toContain('【柏宝书主角档案兼容协议】');
+    // 补充段截自 summary.txt,标题一改就会静默截成空串
+    expect(parts.system).toContain('【摘要时间语言铁律】');
+    // 主角/局势卡补充原是手抄,落后内置缺了伤势证据与局势卡口径;截取后与内置同一份
+    expect(parts.system).toContain('【临时伤势与恢复证据】');
+    expect(parts.system).toContain('本楼结束时的局面');
+    // 伤情更正只给教 conditionPatch 的 v0.17 模板,别的模板不必多这一段
+    expect(parts.system).not.toContain('【柏宝书伤情写法更正】');
     expect(parts.system).not.toMatch(/\{\{\w+\}\}/);
   });
 
-  it('isBuiltinSummaryPrompt 区分内置/自定义,作为解析校验开关', () => {
+  it('does not re-append the time rule a custom template already carries', () => {
+    // 旧模板多自带旧版铁律,再补新版会两版口径并存
+    apiSettings.prompts.summary = 'CUSTOM 【摘要时间语言铁律】 {{content}}';
+    expect(buildSummaryPrompt(args).system).not.toContain('【摘要时间语言铁律】');
+  });
+
+  it('still appends the time rule when only the expanded {{time_rule}} mentions it', () => {
+    // 无时间标签时 {{time_rule}} 展开的时间规则里提到了铁律名,不能当成模板自带而漏补
+    apiSettings.prompts.summary = 'CUSTOM {{time_rule}} {{content}}';
+    const parts = buildSummaryPrompt({ ...args, hasTimeTags: false });
+    expect(parts.user).toContain('不受【摘要时间语言铁律】');
+    expect(parts.system).toContain('═══ 【摘要时间语言铁律】');
+  });
+
+  it('does not repeat sections a template copied from the default already carries', () => {
+    // 照内置改的模板自带全部规则节,再补就是同一规则发两遍;system 为空时 engine 会略过
+    apiSettings.prompts.summary = `${SUMMARY_PROMPT}\n(自定义)`;
+    const parts = buildSummaryPrompt({ ...args, knowledge: [{ id: 'know:t#0', subject: 'Character', text: '认定主角是行商', createdAt: 1 }] });
+    expect(parts.system).toBe('');
+    for (const title of ['主角当前档案规则', '互动局势卡规则', '生活小档案规则', '了解清单规则', '内心好感与外在态度规则', '关系线保留', '摘要时间语言铁律']) {
+      expect(combined(parts).split(`═══ 【${title}】`)).toHaveLength(2);
+    }
+  });
+
+  it('corrects the retired conditionPatch for templates copied from v0.17', () => {
+    // v0.17 默认模板教的是已停用的伤情补丁:照写会被清洗丢掉,主角和 NPC 的伤情都更新不了。
+    // 它自带主角节且只差伤情写法,补一句更正即可;再整段重发主角规则就是新旧两种写法并存
+    apiSettings.prompts.summary = 'CUSTOM ═══ 【主角当前档案规则】 conditionPatch {{content}}';
+    const system = buildSummaryPrompt(args).system;
+    expect(system).toContain('【柏宝书伤情写法更正】');
+    expect(system).toContain('主角与 NPC 的 condition 一律整段覆盖');
+    expect(system).not.toContain('【柏宝书主角档案兼容协议】');
+  });
+
+  it('slices exactly one section for each shared rule', () => {
+    // 按标题截取:标题改名会截成空串,两标题之间插进新节会被静默一起带走
+    for (const [rule, title] of [
+      [RULE_PROTAGONIST, '【主角当前档案规则】'],
+      [RULE_SCENE_FOCUS, '【互动局势卡规则】'],
+      [RULE_RELATION_MOMENTUM, '【关系线保留】'],
+      [RULE_ABSOLUTE_TIME_LANGUAGE, '【摘要时间语言铁律】'],
+      [RULE_NPC_AFFINITY, '【内心好感与外在态度规则】'],
+    ]) {
+      expect(rule.startsWith(`═══ ${title}`)).toBe(true);
+      expect(rule.match(/═══/g)).toHaveLength(2);
+      expect(rule).not.toMatch(/\{\{\w+_rule\}\}/);
+    }
+  });
+
+  it('isBuiltinSummaryPrompt 区分内置/自定义', () => {
     expect(isBuiltinSummaryPrompt()).toBe(true);
     Object.assign(apiSettings.prompts, { summary: SUMMARY_PROMPT });
     expect(isBuiltinSummaryPrompt()).toBe(true);
@@ -146,6 +222,18 @@ describe('new built-in prompts', () => {
     expect(THINKING_CHECKLIST).toContain(SUMMARY_OUTPUT_PROTOCOL);
     expect(THINKING_CHECKLIST).toContain('【输出前核查】');
     expect(THINKING_CHECKLIST).not.toContain('conditionPatch');
+    // v0.17 清单漏了地点项,模型常整楼不记位置
+    expect(THINKING_CHECKLIST).toContain('本楼定位');
+    // 各字段盘点同样被砍过,NPC/物品常漏建漏更新、局势卡一直挂着旧场面
+    for (const item of ['主角盘点', 'NPC 盘点', '局势盘点', '物品盘点', '生活小档案盘点', '计划/悬念盘点']) expect(THINKING_CHECKLIST).toContain(item);
+    // 只剩「核对旧计划」时,悬念揭晓了也没人结案
+    expect(THINKING_CHECKLIST).toContain('旧悬念逐条过');
+    // 了解清单比清单晚加,一直没有盘点项,角色得知主角私事时容易漏记;功能关闭时整项不出现
+    expect(buildSummaryThinking(args.user, true)).toContain(`本楼有谁亲耳听到、亲眼看到或听人转告了${args.user}的名字`);
+    expect(buildSummaryThinking(args.user)).not.toContain('了解清单');
+    // 曾要求新角色一律带 location 或 follow,远程联络、尚未现身的角色被逼着编位置
+    expect(THINKING_CHECKLIST).not.toContain('location 或 follow');
+    expect(THINKING_CHECKLIST).toContain('只被提起或远程联络的没交代所在就省略 location');
     expect(buildSummaryThinking(args.user)).toContain(args.user);
     expect(RESUMMARY_THINKING_CHECKLIST).toContain(SUMMARY_OUTPUT_PROTOCOL);
     expect(RESUMMARY_THINKING_CHECKLIST).toContain('根键只有 summary');
@@ -180,6 +268,12 @@ describe('batch and compression prompts', () => {
     expect(thinking).toContain('每个元素只含 n / summary / timeStart / timeEnd');
     expect(thinking).toContain('现代/数字日期的两端都必须包含完整年份');
     expect(parts.system).toContain('长度必须等于 3');
+    // 撰写规则截自单楼模板,两边不再各写一套;截取段不得带进单楼专属字段
+    expect(parts.system).toContain('【摘要撰写规则】(summary 字段,必填)');
+    expect(parts.system).toContain('【摘要时间语言铁律】');
+    // 日常戏示范写在撰写规则里,批量随截取同步,不另抄一份
+    expect(parts.system).toContain('(互动删光)');
+    expect(parts.system).not.toContain('sceneFocus');
     expect(parts.user).toContain(args.content);
     expect(parts.system).not.toContain(args.content);
     expect(prompt + thinking).not.toMatch(/\{\{\w+\}\}/);
@@ -206,8 +300,15 @@ describe('batch and compression prompts', () => {
       expect(parts.user).toContain(level === 1 ? 'CUSTOM L1' : 'CUSTOM L2');
       expect(parts.system).not.toContain(level === 1 ? 'CUSTOM L1' : 'CUSTOM L2');
       expect(parts.system).toContain('【关系线保留】');
+      expect(parts.system).toContain('【摘要时间语言铁律】');
       expect(parts.system).not.toMatch(/\{\{\w+\}\}/);
     }
+  });
+
+  it('leaves system empty when a custom compression template carries both supplements', () => {
+    // 照内置模板改的自定义模板两段都自带;engine 会略过空 system
+    apiSettings.prompts.resummary = '【摘要时间语言铁律】【关系线保留】 {{content}}';
+    expect(buildResummaryPrompt({ ...args, level: 1 }).system).toBe('');
   });
 });
 
@@ -223,7 +324,7 @@ describe('jailbreak, briefing and query rewrite', () => {
   it('frames the briefing as past-only context that does not cap relationships or set prose style', () => {
     expect(MEMORY_BRIEFING_NOTE).toContain('不要输出简报的标签');
     expect(MEMORY_BRIEFING_END).toContain('不是上限');
-    expect(MEMORY_BRIEFING_END).toContain('最后确认的位置不保证仍然有效');
+    expect(MEMORY_BRIEFING_END).toContain('最后确认的位置与着装不保证仍然有效');
     expect(MEMORY_BRIEFING_END).toContain('不要模仿压缩记录的句式');
   });
 

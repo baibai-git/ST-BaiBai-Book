@@ -194,7 +194,7 @@ export interface MemNpc extends NpcAffinity {
   age?: string;
   /** 年龄锚点:记录 age 时的故事内时间。AI 不填——重放时系统自动盖上该叶子的 timeEnd */
   ageTime?: string;
-  /** 与主角的关系(覆盖型;引导格式「称谓,一句态度」,称谓在开头供不在场档截取) */
+  /** 与主角的关系(覆盖型;引导格式「称谓[,持续立场]」,立场可无,称谓在开头供不在场档截取) */
   relation?: string;
   /** 与其他角色的重要关系(档案层,高门槛;如「阿黛尔之父;与镇长有旧怨」) */
   ties?: string;
@@ -560,8 +560,6 @@ export interface NpcDelta extends NpcAffinity {
   condition?: string;
   /** 旧存档的伤情局部补丁(v0.17 编号协议,已停用):仅重放,新输出不再产生 */
   conditionPatch?: ConditionPatch;
-  /** 非空 location 时的本轮正文连续定位短引(仅校验,不存档) */
-  locationEvidence?: string;
   /** 是否「主要角色」(剧情核心主演,永远全量注入) */
   important?: boolean;
   /** 是否随行(随主角移动)。省略=定点;明确随主角同行的同伴填 true */
@@ -614,7 +612,7 @@ export interface ConditionPatch {
 export interface SceneDelta {
   /** 完整地理路径,由粗到细(如 ["王都","城西区","归雁客栈"]) */
   path: string[];
-  /** 地点描述(必填:写不出有意义描述的地点不记;重放时丢弃空描述节点) */
+  /** 地点描述(add 可省:建点宽、描述严;update 给空串=清除描述,节点保留) */
   desc?: string;
 }
 
@@ -623,7 +621,7 @@ export interface SceneDelta {
  * 覆盖三种情形(都是同一操作):给顶级加父、在已有父子间插入中间节点、改换父级。
  *  - node:该节点**当前**的完整路径(由粗到细)。
  *  - newPath:它应在的**新**完整路径(末段通常与 node 末段同名)。
- *  - descs:newPath 上新建/需补描述的层级,键=该级地名,值=描述(desc 必填原则的延伸)。
+ *  - descs:newPath 上新建/需补描述的层级,键=该级地名,值=描述(可省,写不出不编)。
  */
 export interface SceneReparent {
   node: string[];
@@ -647,11 +645,6 @@ export type SceneOp =
 export interface SummaryDelta {
   /** 本楼层叙事摘要正文 */
   summary?: string;
-  /**
-   * 本次 JSON 实际有效输出的状态字段清单(机器可读的意图声明,便于日志/校验)。
-   * 只是清单,不能代替对应的实际操作;程序不依赖它做状态变更。
-   */
-  stateChanges?: string[];
   /** 覆盖型:故事内当前时间(直接写新值)。仅在正文无时间标签、需 AI 兜底时使用 */
   time?: string;
   /** 本段起始时间(仅正文缺 <bbs_start> 标签时让 AI 补) */

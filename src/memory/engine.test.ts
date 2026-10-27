@@ -193,7 +193,8 @@ describe('summary request roles', () => {
     expect(all.filter(m => m.content.includes('<nvwa_standalone_core>'))).toHaveLength(1);
     expect(all[0].content).toContain('<nvwa_standalone_core>');
     const tail = vi.mocked(client.requestViaMainApi).mock.calls[0][0].slice(-3);
-    const thinking = buildSummaryThinking('User');
+    // 了解清单默认开启,清单带上其盘点项
+    const thinking = buildSummaryThinking('User', true);
     expect(tail).toEqual([
       { role: 'system', content: expect.stringContaining(custom ? '【柏宝书主角档案兼容协议】' : '【物品规则】') },
       { role: 'user', content: expect.stringContaining('The first response.') },
@@ -226,10 +227,8 @@ describe('summary request roles', () => {
       plans: { add: [{ kind: 'plan', content: 'Meet Archivist.', targetTime: '2026/9/10 10:00' }] },
     } satisfies SummaryDelta;
     const text = 'User entered the Archive, received its vault key and arranged a meeting with Archivist.';
-    // 内置提示词要求给 location 时附 locationEvidence,且必须是本轮正文连续短句(校验用,不入库)。
-    const npcsWithEvidence = { add: [{ ...changes.npcs.add[0], locationEvidence: 'User enters the stone Archive' }] };
     vi.mocked(client.requestViaMainApi).mockResolvedValue(
-      `<thinking>Key, place, contact and appointment recorded.</thinking>${JSON.stringify({ ...summary, summary: text, ...changes, npcs: npcsWithEvidence })}`,
+      `<thinking>Key, place, contact and appointment recorded.</thinking>${JSON.stringify({ ...summary, summary: text, ...changes })}`,
     );
 
     await summarizeFloor(0);

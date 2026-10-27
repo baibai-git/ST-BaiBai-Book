@@ -86,7 +86,7 @@ describe('了解清单:AI 输出翻译', () => {
   it('未传上下文=功能关闭整段丢弃;传了则本楼新登场的角色也算名册', () => {
     const raw = { npcs: { add: [{ name: '小夏' }] }, knowledge: { add: [{ who: '小夏', text: '听说主角会医术' }] } };
     expect(finalizeDelta(raw, [], []).knowledge).toBeUndefined();
-    expect(finalizeDelta(raw, [], [], undefined, { shown: [], npcNames: ['艾琳'] }).knowledge)
+    expect(finalizeDelta(raw, [], [], { shown: [], npcNames: ['艾琳'] }).knowledge)
       .toEqual([{ op: 'add', subject: '小夏', text: '听说主角会医术' }]);
   });
 });
@@ -252,6 +252,8 @@ describe('了解清单:实际摘要接线', () => {
     await summarizeFloor(1);
     expect(requestText()).toContain('【了解清单规则】');
     expect(requestText()).toContain('k1. 认定林舟是行商');
+    // 检查清单的盘点项随开关一起发
+    expect(requestText()).toContain('了解清单:对照「角色对主角的了解」');
     expect(chat[1].extra!.bbs_leaf!.delta.knowledge).toEqual([
       { op: 'update', id: knowledgeId(leafId(chat[0]), 0), text: '得知林舟其实是王子,此前一直被瞒' },
       { op: 'add', subject: '艾琳', text: '知道主角名叫林舟' },

@@ -116,46 +116,63 @@ describe('旧存档 conditionPatch 照常重放', () => {
   });
 });
 
-describe('locationEvidence 校验(仅内置模板启用)', () => {
-  const npcLoc = (extra: Record<string, unknown>) =>
+describe('NPC 定位不再要求 locationEvidence', () => {
+  const npcLoc = (extra: Record<string, unknown> = {}) =>
     ({ npcs: { update: [{ name: '艾琳', location: '钟楼', ...extra }] } } as never);
-  const content = '夜里,她走进钟楼,风很大。';
 
-  it('证据命中本轮正文 → 保留定位', () => {
-    const out = finalizeDelta(npcLoc({ locationEvidence: '她走进钟楼' }), [], [], { content, enforce: true });
+  it('不带证据的定位照收', () => {
+    const out = finalizeDelta(npcLoc(), []);
     expect(out.npcs?.update?.[0].location).toBe('钟楼');
   });
 
-  it('缺证据 → 丢弃定位', () => {
-    const out = finalizeDelta(npcLoc({}), [], [], { content, enforce: true });
-    expect(out.npcs?.update?.[0].location).toBeUndefined();
-  });
-
-  it('证据不在本轮正文 → 丢弃定位', () => {
-    const out = finalizeDelta(npcLoc({ locationEvidence: '她在码头' }), [], [], { content, enforce: true });
-    expect(out.npcs?.update?.[0].location).toBeUndefined();
-  });
-
-  it('自定义模板(enforce=false)→ 不校验,保留旧行为', () => {
-    const out = finalizeDelta(npcLoc({}), [], [], { content, enforce: false });
+  it('旧习惯多给的 locationEvidence 不入库', () => {
+    const out = finalizeDelta(npcLoc({ locationEvidence: '她走进钟楼' }), []);
     expect(out.npcs?.update?.[0].location).toBe('钟楼');
+    expect(out.npcs?.update?.[0]).not.toHaveProperty('locationEvidence');
   });
 
-  it('空 location(去向不明)→ 不需证据,直接清除', () => {
-    const out = finalizeDelta({ npcs: { update: [{ name: '艾琳', location: '' }] } } as never, [], [], { content, enforce: true });
+  it('空 location(去向不明)→ 清除', () => {
+    const out = finalizeDelta({ npcs: { update: [{ name: '艾琳', location: '' }] } } as never, []);
     expect(out.npcs?.update?.[0].location).toBe('');
   });
+});
 
-  it('证据与正文只差全半角/标点/引号 → 仍算命中', () => {
-    for (const quote of ['她走进钟楼，风很大', '“她走进钟楼”', '她走进钟楼 风很大']) {
-      const out = finalizeDelta(npcLoc({ locationEvidence: quote }), [], [], { content, enforce: true });
-      expect(out.npcs?.update?.[0].location).toBe('钟楼');
-    }
+describe('scenes 建点宽、描述严', () => {
+  it('add 不带 desc 也建节点,中间级自动补建', () => {
+    const out = finalizeDelta({ scenes: { add: [{ path: ['王都', '城西区', '归雁客栈'] }] } } as never, []);
+    expect(out.scenes?.add).toEqual([{ path: ['王都', '城西区', '归雁客栈'] }]);
+    const scenes = deriveMemory([message(out)]).scenes;
+    expect(scenes.map(s => s.path.join('/')).sort()).toEqual(['王都', '王都/城西区', '王都/城西区/归雁客栈']);
+    expect(scenes.every(s => !s.desc)).toBe(true);
   });
 
-  it('去掉标点后过短的证据不算数', () => {
-    const out = finalizeDelta(npcLoc({ locationEvidence: '她，走。' }), [], [], { content: '她,走。', enforce: true });
-    expect(out.npcs?.update?.[0].location).toBeUndefined();
+  it('update 给空串 → 清除错填描述,节点保留', () => {
+    const chat: STMessage[] = [
+      message({ scenes: { add: [{ path: ['码头'], desc: '今天下雨,人很多' }] } }),
+      message(finalizeDelta({ scenes: { update: [{ path: ['码头'], desc: '' }] } } as never, [])),
+    ];
+    const scenes = deriveMemory(chat).scenes;
+    expect(scenes).toHaveLength(1);
+    expect(scenes[0].desc).toBeUndefined();
+  });
+
+  it('add 不覆盖已有描述,update 才覆盖', () => {
+    const chat: STMessage[] = [
+      message({ scenes: { add: [{ path: ['码头'], desc: '城西的货运码头' }] } }),
+      message({ scenes: { add: [{ path: ['码头'] }, { path: ['码头'], desc: '另一种说法' }] } }),
+    ];
+    expect(deriveMemory(chat).scenes[0].desc).toBe('城西的货运码头');
+    chat.push(message({ scenes: { update: [{ path: ['码头'], desc: '城西的货运码头,后被焚毁' }] } }));
+    expect(deriveMemory(chat).scenes[0].desc).toBe('城西的货运码头,后被焚毁');
+  });
+
+  it('update 不带 desc → 无事可做,丢弃', () => {
+    const out = finalizeDelta({ scenes: { update: [{ path: ['码头'] }] } } as never, []);
+    expect(out.scenes).toBeUndefined();
+  });
+
+  it('对不存在的地点 update 空串 → 不凭空建点', () => {
+    expect(deriveMemory([message({ scenes: { update: [{ path: ['码头'], desc: '' }] } })]).scenes).toHaveLength(0);
   });
 });
 
